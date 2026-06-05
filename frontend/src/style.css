@@ -1,0 +1,44 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 全局平滑过渡 */
+* {
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+
+/* 自定义滚动条（深色模式适配） */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #9ca3af;
+  border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #4b5563;
+}
+
+/* xterm 终端容器 */
+.xterm-container {
+  height: 100%;
+  width: 100%;
+}
+.xterm-container .xterm {
+  height: 100%;
+  padding: 8px;
+}
+/* 终端底部圆角（xterm.js 动态 DOM，需全局样式） */
+.xterm-viewport {
+  border-bottom-left-radius: 0.75rem;
+  border-bottom-right-radius: 0.75rem;
+}
+/* 防止终端框与外部卡片重叠 */
+.xterm-screen {
+  border-bottom-left-radius: 0.75rem;
+  border-bottom-right-radius: 0.75rem;
+}

@@ -1,0 +1,18 @@
+services:
+  python-run-panel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: python-run-panel
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - ./workspace:/data/workspace
+    environment:
+      - WORKSPACE_DIR=/data/workspace
+      - TZ=Asia/Shanghai
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
