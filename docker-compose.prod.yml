@@ -1,0 +1,50 @@
+services:
+  python-run-panel:
+    image: liyixin21/python-run-panel:latest
+    container_name: python-run-panel
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      # 项目 workspace（持久化用户项目、数据库、日志）
+      - ./workspace:/data/workspace
+    environment:
+      - WORKSPACE_DIR=/data/workspace
+      - TZ=Asia/Shanghai
+      # 初始密码仅首次启动时生效，修改密码后存储在 workspace/panel.db 中
+      - PANEL_PASSWORD=admin
+    # 资源限制
+    deploy:
+      resources:
+        limits:
+          cpus: '2'
+          memory: 2G
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+    # 安全和只读加固
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_PTRACE  # 子进程管理需要
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/tmp
+
+    # 日志轮转（最多保留 3 个文件，每个最大 10MB）
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # 健康检查
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

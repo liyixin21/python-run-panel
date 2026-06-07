@@ -1,5 +1,6 @@
 """
 SQLAlchemy ORM 模型定义
+- PanelUser：面板登录用户（用户名 + 密码哈希）
 - Project：项目元数据（名称、目录、虚拟环境、启动命令等）
 - Schedule：定时任务配置（cron 启动/关闭表达式）
 """
@@ -17,6 +18,16 @@ class ProjectStatus(str, enum.Enum):
     RUNNING = "running"
     ERROR = "error"
     STARTING = "starting"
+
+
+class PanelUser(Base):
+    """面板登录用户"""
+    __tablename__ = "panel_users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), unique=True, nullable=False, comment="登录用户名")
+    password_hash = Column(String(256), nullable=False, comment="PBKDF2 密码哈希")
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 class Project(Base):

@@ -125,16 +125,69 @@ class ProjectManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
         except asyncio.TimeoutError:
-            return {"success": False, "stdout": "", "stderr": "依赖安装超时（5分钟）", "returncode": -1}
+            logger.error(f"项目 '{project_name}' 依赖安装超时（10分钟）")
+            return {"success": False, "stdout": "", "stderr": "依赖安装超时（10分钟）", "returncode": -1}
+
+        stdout_str = stdout.decode("utf-8", errors="replace")
+        stderr_str = stderr.decode("utf-8", errors="replace")
+
+        if process.returncode != 0:
+            logger.error(f"项目 '{project_name}' 依赖安装失败 (exit={process.returncode}):\n{stderr_str}")
+        else:
+            logger.info(f"项目 '{project_name}' 依赖安装成功")
 
         return {
             "success": process.returncode == 0,
-            "stdout": stdout.decode("utf-8", errors="replace"),
-            "stderr": stderr.decode("utf-8", errors="replace"),
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "returncode": process.returncode,
         }
+
+    async def stream_install_requirements(self, project_name: str):
+        """流式安装 requirements.txt，逐行 yield 输出。客户端断开时自动杀死 pip 进程。"""
+        venv_dir = self._get_venv_dir(project_name)
+        project_dir = self._get_project_dir(project_name)
+        pip_bin = os.path.join(venv_dir, "bin", "pip")
+        req_file = os.path.join(project_dir, "requirements.txt")
+
+        if not os.path.exists(pip_bin):
+            raise FileNotFoundError(f"pip 可执行文件不存在: {pip_bin}")
+        if not os.path.exists(req_file):
+            raise FileNotFoundError(f"requirements.txt 不存在: {req_file}")
+
+        logger.info(f"正在为项目 '{project_name}' 安装依赖（流式）...")
+        process = await asyncio.create_subprocess_exec(
+            pip_bin, "install", "--default-timeout=120", "--retries=3",
+            "-i", "https://pypi.tuna.tsinghua.edu.cn/simple",
+            "-r", req_file,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        try:
+            async for line in process.stdout:
+                text = line.decode("utf-8", errors="replace").rstrip("\n")
+                if text:
+                    yield text
+
+            await process.wait()
+            success = process.returncode == 0
+            if success:
+                logger.info(f"项目 '{project_name}' 依赖安装成功")
+            else:
+                logger.error(f"项目 '{project_name}' 依赖安装失败 (exit={process.returncode})")
+            yield f"__DONE__:{success}"
+        finally:
+            # 确保生成器被清理时（包括客户端断开）杀死子进程
+            if process.returncode is None:
+                try:
+                    process.kill()
+                    await process.wait()
+                    logger.info(f"项目 '{project_name}' 安装进程已被终止（客户端断开或取消）")
+                except Exception:
+                    pass
 
     async def install_package(self, project_name: str, package_name: str) -> dict:
         venv_dir = self._get_venv_dir(project_name)
@@ -152,16 +205,64 @@ class ProjectManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
-            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
+            stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=600)
         except asyncio.TimeoutError:
-            return {"success": False, "stdout": "", "stderr": "安装超时（5分钟）", "returncode": -1}
+            logger.error(f"项目 '{project_name}' 安装包 '{package_name}' 超时（10分钟）")
+            return {"success": False, "stdout": "", "stderr": "安装超时（10分钟）", "returncode": -1}
+
+        stdout_str = stdout.decode("utf-8", errors="replace")
+        stderr_str = stderr.decode("utf-8", errors="replace")
+
+        if process.returncode != 0:
+            logger.error(f"项目 '{project_name}' 安装包 '{package_name}' 失败 (exit={process.returncode}):\n{stderr_str}")
+        else:
+            logger.info(f"项目 '{project_name}' 安装包 '{package_name}' 成功")
 
         return {
             "success": process.returncode == 0,
-            "stdout": stdout.decode("utf-8", errors="replace"),
-            "stderr": stderr.decode("utf-8", errors="replace"),
+            "stdout": stdout_str,
+            "stderr": stderr_str,
             "returncode": process.returncode,
         }
+
+    async def stream_install_package(self, project_name: str, package_name: str):
+        """流式安装单个包，逐行 yield 输出。客户端断开时自动杀死 pip 进程。"""
+        venv_dir = self._get_venv_dir(project_name)
+        pip_bin = os.path.join(venv_dir, "bin", "pip")
+
+        if not os.path.exists(pip_bin):
+            raise FileNotFoundError(f"pip 可执行文件不存在: {pip_bin}")
+
+        logger.info(f"正在为项目 '{project_name}' 安装包（流式）: {package_name}")
+        process = await asyncio.create_subprocess_exec(
+            pip_bin, "install", "--default-timeout=120", "--retries=3",
+            "-i", "https://pypi.tuna.tsinghua.edu.cn/simple",
+            package_name,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        try:
+            async for line in process.stdout:
+                text = line.decode("utf-8", errors="replace").rstrip("\n")
+                if text:
+                    yield text
+
+            await process.wait()
+            success = process.returncode == 0
+            if success:
+                logger.info(f"项目 '{project_name}' 安装包 '{package_name}' 成功")
+            else:
+                logger.error(f"项目 '{project_name}' 安装包 '{package_name}' 失败 (exit={process.returncode})")
+            yield f"__DONE__:{success}"
+        finally:
+            if process.returncode is None:
+                try:
+                    process.kill()
+                    await process.wait()
+                    logger.info(f"项目 '{project_name}' 安装包进程已被终止（客户端断开或取消）")
+                except Exception:
+                    pass
 
     async def get_installed_packages(self, project_name: str) -> dict:
         """

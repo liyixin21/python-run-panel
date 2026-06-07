@@ -4,6 +4,7 @@
 启动时自动检测并迁移旧表结构，保证老数据可用。
 """
 import logging
+from datetime import datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
@@ -23,12 +24,13 @@ class Base(DeclarativeBase):
 
 
 async def init_db():
-    """初始化数据库：建表 + 迁移旧表结构"""
-    from backend.models import Project, Schedule
+    """初始化数据库：建表 + 迁移旧表结构 + 创建默认管理员"""
+    from backend.models import Project, Schedule, PanelUser
 
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _migrate_schema(conn)
+        await _create_default_user(conn)
 
 
 async def _migrate_schema(conn):
@@ -65,6 +67,23 @@ async def _migrate_schema(conn):
             logger.info("start_cmd 列已添加")
     except Exception as e:
         logger.warning(f"数据库迁移失败 (非致命): {e}")
+
+
+async def _create_default_user(conn):
+    """如果 panel_users 表为空，则创建默认管理员 admin/admin"""
+    from sqlalchemy import select
+    from backend.models import PanelUser
+    from backend.config import PANEL_PASSWORD
+
+    result = await conn.execute(select(PanelUser).limit(1))
+    if result.scalar_one_or_none() is None:
+        from backend.utils import hash_password
+        default_hash = hash_password(PANEL_PASSWORD)
+        await conn.execute(
+            text("INSERT INTO panel_users (username, password_hash, created_at) VALUES (:u, :p, :t)"),
+            {"u": "admin", "p": default_hash, "t": datetime.utcnow()},
+        )
+        logger.info(f"已创建默认管理员 (用户名: admin)")
 
 
 async def get_session() -> AsyncSession:

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from backend.database import async_session
 from backend.models import Project
 from backend.services.terminal_manager import terminal_manager
+from backend.routers.auth import verify_token_ws
 
 logger = logging.getLogger(__name__)
 
@@ -18,10 +19,15 @@ router = APIRouter(tags=["Web终端"])
 
 
 @router.websocket("/ws/terminal/{project_id}")
-async def websocket_terminal(websocket: WebSocket, project_id: int):
+async def websocket_terminal(
+    websocket: WebSocket,
+    project_id: int,
+    token: str = verify_token_ws,
+):
     """
     WebSocket 全双工终端端点。
     前端通过 xterm.js 建立连接，后端创建 PTY 并桥接数据流。
+    认证 token 通过 URL 查询参数（?token=xxx）传递，因为浏览器 WebSocket API 不支持自定义请求头。
     """
     # 验证项目是否存在
     async with async_session() as session:

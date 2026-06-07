@@ -68,13 +68,18 @@ def _make_response(project: Project) -> dict:
 
 
 async def _get_project(session, identifier: str) -> Project:
-    """通过名称或数字 ID 查找项目"""
-    if identifier.isdigit():
-        q = select(Project).where(Project.id == int(identifier))
-    else:
-        q = select(Project).where(Project.name == identifier)
+    """通过名称或数字 ID 查找项目（优先按名称查找）"""
+    # 优先按名称查找
+    q = select(Project).where(Project.name == identifier)
     result = await session.execute(q)
     project = result.scalar_one_or_none()
+    
+    # 如果按名称找不到，且是纯数字，则尝试按ID查找
+    if not project and identifier.isdigit():
+        q = select(Project).where(Project.id == int(identifier))
+        result = await session.execute(q)
+        project = result.scalar_one_or_none()
+    
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     return project

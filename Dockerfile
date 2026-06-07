@@ -27,13 +27,20 @@ LABEL description="基于 Web 的容器化 Python 项目托管与进程管理面
 RUN sed -i 's/deb.debian.org/mirrors.tuna.tsinghua.edu.cn/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || true
 
 # 安装必要的系统工具（lsof 用于检测进程监听端口）
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 清华源偶发 502，失败时回退到默认 Debian 源重试
+RUN apt-get update && \
+    (apt-get install -y --no-install-recommends --fix-missing \
     bash \
     curl \
     procps \
     lsof \
     python3-venv \
-    && rm -rf /var/lib/apt/lists/*
+    || ( \
+      sed -i 's/mirrors.tuna.tsinghua.edu.cn/deb.debian.org/g' /etc/apt/sources.list.d/debian.sources 2>/dev/null && \
+      apt-get update && \
+      apt-get install -y --no-install-recommends bash curl procps lsof python3-venv \
+    )) && \
+    rm -rf /var/lib/apt/lists/*
 
 # 创建工作目录和 workspace
 RUN mkdir -p /app /data/workspace
@@ -61,9 +68,10 @@ EXPOSE 8000
 ENV PYTHONUNBUFFERED=1
 ENV WORKSPACE_DIR=/data/workspace
 ENV STATIC_DIR=/app/static
+ENV PANEL_PASSWORD=admin
 
 # 健康检查
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+HEALTHCHECK --interval=60s --timeout=5s --start-period=10s --retries=3 \
     CMD curl -f http://localhost:8000/api/health || exit 1
 
 # 启动应用

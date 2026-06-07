@@ -11,6 +11,7 @@ services:
     environment:
       - WORKSPACE_DIR=/data/workspace
       - TZ=Asia/Shanghai
+      - PANEL_PASSWORD=admin
     logging:
       driver: "json-file"
       options:

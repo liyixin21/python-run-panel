@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import STATIC_DIR, WORKSPACE_DIR
 from backend.database import init_db
 from backend.services.process_manager import process_manager
-from backend.routers import projects, processes, files, terminal, packages
+from backend.routers import projects, processes, files, terminal, packages, auth, settings
 
 # 配置日志
 logging.basicConfig(
@@ -67,17 +67,44 @@ app.add_middleware(
 )
 
 # 注册 API 路由
-app.include_router(projects.router)
-app.include_router(processes.router)
-app.include_router(files.router)
-app.include_router(packages.router)
+# 认证路由无需鉴权
+app.include_router(auth.router)
+
+# 业务路由需要登录验证
+app.include_router(projects.router, dependencies=[auth.verify_token])
+app.include_router(processes.router, dependencies=[auth.verify_token])
+app.include_router(files.router, dependencies=[auth.verify_token])
+app.include_router(packages.router, dependencies=[auth.verify_token])
 app.include_router(terminal.router)
+app.include_router(settings.router, dependencies=[auth.verify_token])
 
 
 # WebSocket 实时日志推送端点（必须在 StaticFiles mount 之前注册）
-@app.websocket("/ws/logs/{project_id}")
-async def websocket_logs(websocket: WebSocket, project_id: int):
+@app.websocket("/ws/logs/{identifier}")
+async def websocket_logs(websocket: WebSocket, identifier: str):
     """WebSocket 实时日志推送：前端通过此端点接收进程日志流"""
+    # 通过名称或数字ID查找项目
+    from backend.database import async_session
+    from backend.models import Project
+    from sqlalchemy import select
+    
+    async with async_session() as session:
+        # 优先按名称查找
+        q = select(Project).where(Project.name == identifier)
+        result = await session.execute(q)
+        project = result.scalar_one_or_none()
+        
+        # 如果按名称找不到，且是纯数字，则尝试按ID查找
+        if not project and identifier.isdigit():
+            q = select(Project).where(Project.id == int(identifier))
+            result = await session.execute(q)
+            project = result.scalar_one_or_none()
+    
+    if not project:
+        await websocket.close(code=4004, reason="项目不存在")
+        return
+    
+    project_id = project.id
     await websocket.accept()
     await process_manager.subscribe_logs(project_id, websocket)
     try:

@@ -13,3 +13,6 @@ WORKSPACE_DIR = os.environ.get("WORKSPACE_DIR", _DEFAULT_WORKSPACE)
 DATABASE_URL = os.environ.get("DATABASE_URL", f"sqlite+aiosqlite:///{WORKSPACE_DIR}/panel.db")
 
 STATIC_DIR = os.environ.get("STATIC_DIR", os.path.join(os.path.dirname(__file__), "..", "static"))
+
+# 面板登录密码（通过环境变量 PANEL_PASSWORD 设置，默认 admin）
+PANEL_PASSWORD = os.environ.get("PANEL_PASSWORD", "admin")

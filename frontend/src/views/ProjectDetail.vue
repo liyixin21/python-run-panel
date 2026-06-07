@@ -147,7 +147,7 @@
 import { ref, onMounted, onBeforeUnmount, computed, provide, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { getProject, updateProject, startProcess, stopProcess, restartProcess,
-  getProcessLogs, getSchedules, setSchedules,
+  getProcessLogs, clearProcessLogs, getSchedules, setSchedules,
   installPackage, uninstallPackage, getInstalledPackages,
 } from '../api/index.js'
 import FileManager from '../components/FileManager.vue'
@@ -193,8 +193,14 @@ function timeToCron(t) { if (!t) return null; const [h, m] = t.split(':').map(Nu
 function cronToTime(c) { if (!c) return ''; const p = c.split(' '); return `${p[1].padStart(2,'0')}:${p[0].padStart(2,'0')}` }
 
 function connectLogWebSocket() {
+  if (!project.value?.id) return
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  logWs = new WebSocket(`${protocol}//${window.location.host}/ws/logs/${project.value?.id}`)
+  const token = localStorage.getItem('auth_token')
+  let wsUrl = `${protocol}//${window.location.host}/ws/logs/${project.value.id}`
+  if (token) {
+    wsUrl += `?token=${encodeURIComponent(token)}`
+  }
+  logWs = new WebSocket(wsUrl)
   logWs.onopen = () => { logWsConnected.value = true }
   logWs.onmessage = (event) => {
     logText.value += (logText.value ? '\n' : '') + event.data
@@ -203,7 +209,14 @@ function connectLogWebSocket() {
   logWs.onclose = () => { logWsConnected.value = false }
 }
 
-function clearLogs() { logText.value = '' }
+async function clearLogs() {
+  logText.value = ''
+  try {
+    await clearProcessLogs(project.value.id)
+  } catch (err) {
+    console.error('清空日志失败:', err)
+  }
+}
 
 async function fetchProject() {
   loading.value = true

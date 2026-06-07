@@ -265,6 +265,9 @@ class ProcessManager:
     def get_process_logs(self, project_id: int) -> str:
         return self._processes[project_id].get_logs()
 
+    def clear_process_logs(self, project_id: int):
+        self._processes[project_id].clear_logs()
+
     # ---------- 实时日志 WebSocket ----------
 
     async def subscribe_logs(self, project_id: int, ws: WebSocket):

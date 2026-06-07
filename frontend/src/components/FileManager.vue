@@ -11,14 +11,13 @@
         >
           新建文件夹
         </button>
-        <!-- 选择文件上传 -->
+        <!-- 选择文件上传（可多选文件） -->
         <label
           class="px-2.5 py-1.5 text-xs rounded-lg bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400 hover:bg-blue-200 dark:hover:bg-blue-900/50 cursor-pointer transition-colors"
           :class="{ 'opacity-50 pointer-events-none': uploading }"
         >
           {{ uploading ? '上传中...' : '选择文件' }}
           <input
-            ref="fileInput"
             type="file"
             class="hidden"
             multiple
@@ -26,7 +25,7 @@
             @change="onFileInputChange"
           />
         </label>
-        <!-- 选择文件夹上传 -->
+        <!-- 上传文件夹（仅上传内容，不含文件夹本身） -->
         <label
           class="px-2.5 py-1.5 text-xs rounded-lg bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-900/50 cursor-pointer transition-colors"
           :class="{ 'opacity-50 pointer-events-none': uploading }"
@@ -36,9 +35,8 @@
             type="file"
             class="hidden"
             webkitdirectory
-            multiple
             :disabled="uploading"
-            @change="onFileInputChange"
+            @change="onFolderInputChange"
           />
         </label>
       </div>
@@ -224,6 +222,53 @@
       </Transition>
     </Teleport>
 
+    <!-- 依赖安装输出弹窗 -->
+    <Teleport to="body">
+      <Transition name="modal">
+        <div
+          v-if="showInstallOutput"
+          class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm"
+          @click.self="!installingReqs && !installingDeps && (showInstallOutput = false)"
+        >
+          <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl p-6 w-full max-w-2xl mx-4 border border-gray-200 dark:border-gray-700 flex flex-col max-h-[80vh]">
+            <div class="flex items-center justify-between mb-4">
+              <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                {{ installingReqs || installingDeps ? '正在安装依赖...' : '依赖安装结果' }}
+                <span v-if="installingReqs || installingDeps" class="ml-2 inline-block w-2 h-2 rounded-full bg-blue-500 animate-pulse"></span>
+              </h3>
+              <button
+                @click="showInstallOutput = false"
+                :disabled="installingReqs || installingDeps"
+                class="p-1 rounded text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-30"
+              >
+                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+              </button>
+            </div>
+            <pre
+              ref="installOutputRef"
+              class="flex-1 min-h-[300px] max-h-[60vh] p-4 text-xs font-mono rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-900 text-green-400 overflow-y-auto whitespace-pre-wrap break-all"
+            >{{ installOutputLines.length > 0 ? installOutputLines.join('\n') : '等待输出...' }}</pre>
+            <div class="flex gap-3 mt-4">
+              <button
+                v-if="installingReqs || installingDeps"
+                @click="cancelInstall"
+                class="flex-1 px-4 py-2 text-sm font-medium rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors"
+              >
+                取消安装
+              </button>
+              <button
+                @click="showInstallOutput = false"
+                :disabled="installingReqs || installingDeps"
+                class="flex-1 px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+              >
+                {{ installingReqs || installingDeps ? '安装中...' : '关闭' }}
+              </button>
+            </div>
+          </div>
+        </div>
+      </Transition>
+    </Teleport>
+
     <!-- 文件编辑弹窗 -->
     <Teleport to="body">
       <Transition name="modal">
@@ -279,11 +324,16 @@ const dragover = ref(false)
 const showNewDirInput = ref(false)
 const newDirName = ref('')
 const dirInput = ref(null)
-const fileInput = ref(null)
 
 const showRequirementsDialog = ref(false)
 const installingDeps = ref(false)
 const installingReqs = ref(false)
+let installAbortController = null  // 用于取消安装
+
+// 依赖安装输出窗口
+const showInstallOutput = ref(false)
+const installOutputLines = ref([])
+const installOutputRef = ref(null)
 
 // 文件编辑器
 const showEditor = ref(false)
@@ -350,67 +400,128 @@ async function onDrop(e) {
   const items = e.dataTransfer?.items
   if (!items) return
 
+  // ================================================================
+  // 核心修复：DataTransferItemList 是实时集合，与拖拽事件生命周期绑定。
+  // 一旦在 await 后让出事件循环，浏览器可能清理 DataTransfer，
+  // 导致后续 DataTransferItem.webkitGetAsEntry() 返回 null。
+  // 因此必须【在任何 await 之前】同步提取所有 FileSystemEntry，
+  // 将其存入普通数组，断开与实时集合的依赖。
+  // ================================================================
+  const rootEntries = []
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
+    if (!item || item.kind !== 'file') continue
+
+    // 尝试获取 FileSystemEntry（目录或文件）
+    const getEntry = item.webkitGetAsEntry || item.getAsEntry
+    const entry = getEntry ? getEntry.call(item) : null
+
+    if (entry) {
+      rootEntries.push(entry)
+    } else {
+      // fallback：无 Entry API 时直接用 getAsFile() 获取文件
+      const file = item.getAsFile()
+      if (file) {
+        rootEntries.push(file)
+      }
+    }
+  }
+
   const fileList = []
-  await traverseFileTree(items, fileList)
+  // 现在所有条目都已脱离 DataTransferItemList，可以安全异步处理
+  await processEntries(rootEntries, fileList)
 
   if (fileList.length > 0) {
     await doUpload(fileList)
   }
 }
 
-async function traverseFileTree(items, fileList) {
-  for (const item of items) {
-    if (item.kind === 'file') {
-      const file = item.getAsFile()
-      if (file) {
-        // 保留相对路径信息用于文件夹上传
-        if (item.webkitGetAsEntry && item.webkitGetAsEntry().isFile) {
-          const entry = item.webkitGetAsEntry()
-          // 拼接完整相对路径
-          if (entry.fullPath) {
-            Object.defineProperty(file, '_webkit_relative_path', {
-              value: entry.fullPath.replace(/^\//, ''),
-              writable: false,
-            })
-          }
+/**
+ * 处理根级条目列表（FileSystemEntry 或 File 的混合数组）。
+ * 所有条目已在同步阶段从 DataTransferItemList 中提取，可安全异步遍历。
+ */
+async function processEntries(entries, fileList) {
+  for (const entry of entries) {
+    // 如果是已提取的 File 对象（fallback 路径）
+    if (entry instanceof File) {
+      fileList.push(entry)
+      continue
+    }
+    if (entry.isDirectory) {
+      await readDirectoryEntries(entry, fileList)
+    } else if (entry.isFile) {
+      try {
+        const file = await new Promise((resolve, reject) => entry.file(resolve, reject))
+        if (file && entry.fullPath) {
+          Object.defineProperty(file, '_webkit_relative_path', {
+            value: entry.fullPath.replace(/^\//, ''),
+            writable: false,
+          })
         }
-        fileList.push(file)
-      }
-    } else if (item.kind === 'directory' || (item.webkitGetAsEntry && item.webkitGetAsEntry().isDirectory)) {
-      const entry = item.webkitGetAsEntry()
-      if (entry) {
-        await readDirectoryEntries(entry, fileList)
+        if (file) fileList.push(file)
+      } catch (err) {
+        console.warn('读取文件条目失败:', err)
       }
     }
   }
 }
 
+/**
+ * 递归读取目录中的所有文件。
+ * ================================================================
+ * 关键设计：分两步解决异步回调问题
+ * 1. 同步阶段 — 使用同步回调批量收集所有 FileSystemEntry
+ * 2. 异步阶段 — 遍历收集到的条目，逐个异步读取文件内容
+ *
+ * 避免在 reader.readEntries 的回调中使用 async/await，
+ * 因为 readEntries 忽略回调的 Promise 返回值，
+ * 异步操作可能导致批次错乱或条目丢失。
+ * ================================================================
+ */
 function readDirectoryEntries(dirEntry, fileList) {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const reader = dirEntry.createReader()
+    const allEntries = []
+
+    // 阶段 1：同步收集所有条目
     const readBatch = () => {
-      reader.readEntries(async (entries) => {
+      reader.readEntries((entries) => {
         if (entries.length === 0) {
-          resolve()
+          // 收集完毕，进入异步处理阶段
+          processDirectoryEntries(allEntries, fileList).then(resolve).catch(reject)
           return
         }
-        for (const entry of entries) {
-          if (entry.isFile) {
-            const file = await new Promise((res) => entry.file(res))
-            Object.defineProperty(file, '_webkit_relative_path', {
-              value: entry.fullPath.replace(/^\//, ''),
-              writable: false,
-            })
-            fileList.push(file)
-          } else if (entry.isDirectory) {
-            await readDirectoryEntries(entry, fileList)
-          }
-        }
+        allEntries.push(...entries)
         readBatch()
-      })
+      }, reject)
     }
     readBatch()
   })
+}
+
+/**
+ * 异步处理已收集的目录条目列表。
+ * 此时已脱离 readEntries 的回调上下文，可以安全使用 async/await。
+ */
+async function processDirectoryEntries(entries, fileList) {
+  for (const entry of entries) {
+    if (entry.isFile) {
+      try {
+        const file = await new Promise((res, rej) => entry.file(res, rej))
+        if (file && entry.fullPath) {
+          Object.defineProperty(file, '_webkit_relative_path', {
+            value: entry.fullPath.replace(/^\//, ''),
+            writable: false,
+          })
+        }
+        if (file) fileList.push(file)
+      } catch (err) {
+        console.warn('读取文件失败:', err)
+      }
+    } else if (entry.isDirectory) {
+      await readDirectoryEntries(entry, fileList)
+    }
+  }
 }
 
 function onFileInputChange(e) {
@@ -419,6 +530,29 @@ function onFileInputChange(e) {
     doUpload(fileList)
     e.target.value = ''
   }
+}
+
+function onFolderInputChange(e) {
+  const rawFiles = Array.from(e.target.files || [])
+  if (rawFiles.length === 0) return
+
+  // 剥离顶层文件夹名，仅上传内容
+  // 例如 "MyProject/main.py" → "main.py"
+  //       "MyProject/sub/utils.py" → "sub/utils.py"
+  const fileList = rawFiles.map((file) => {
+    const relPath = file.webkitRelativePath || file.name
+    const slashIdx = relPath.indexOf('/')
+    const stripped = slashIdx > -1 ? relPath.slice(slashIdx + 1) : relPath
+    const newFile = new File([file], stripped, { type: file.type, lastModified: file.lastModified })
+    Object.defineProperty(newFile, '_webkit_relative_path', {
+      value: stripped,
+      writable: false,
+    })
+    return newFile
+  })
+
+  doUpload(fileList)
+  e.target.value = ''
 }
 
 async function doUpload(fileList) {
@@ -445,35 +579,81 @@ async function doUpload(fileList) {
   } finally {
     uploading.value = false
     uploadProgress.value = 0
-    if (fileInput.value) fileInput.value.value = ''
   }
 }
 
 async function installReqs() {
   installingReqs.value = true
+  installOutputLines.value = []
+  showInstallOutput.value = true
+
+  // 创建取消控制器
+  installAbortController = new AbortController()
+
   try {
-    const res = await installRequirements(props.projectId)
-    if (res.data.success) alert('依赖安装成功')
-    else alert('依赖安装失败，请查看运行日志')
+    const res = await installRequirements(props.projectId, (line) => {
+      installOutputLines.value.push(line)
+      nextTick(() => {
+        if (installOutputRef.value) {
+          installOutputRef.value.scrollTop = installOutputRef.value.scrollHeight
+        }
+      })
+    }, installAbortController.signal)
+    if (res.data.success) {
+      installOutputLines.value.push('--- 依赖安装成功 ---')
+    } else {
+      installOutputLines.value.push('--- 依赖安装失败 ---')
+    }
   } catch (err) {
-    alert(`安装失败: ${err.response?.data?.detail || err.message}`)
-  } finally { installingReqs.value = false }
+    if (err.name === 'AbortError') {
+      installOutputLines.value.push('--- 安装已被用户取消 ---')
+    } else {
+      installOutputLines.value.push(`--- 安装失败: ${err.response?.data?.detail || err.message} ---`)
+    }
+  } finally {
+    installingReqs.value = false
+    installAbortController = null
+  }
 }
 
 async function confirmInstallRequirements() {
   installingDeps.value = true
+  installOutputLines.value = []
+  showRequirementsDialog.value = false
+  showInstallOutput.value = true
+
+  installAbortController = new AbortController()
+
   try {
-    const res = await installRequirements(props.projectId)
+    const res = await installRequirements(props.projectId, (line) => {
+      installOutputLines.value.push(line)
+      nextTick(() => {
+        if (installOutputRef.value) {
+          installOutputRef.value.scrollTop = installOutputRef.value.scrollHeight
+        }
+      })
+    }, installAbortController.signal)
     if (res.data.success) {
-      showRequirementsDialog.value = false
+      installOutputLines.value.push('--- 依赖安装成功 ---')
     } else {
-      alert('依赖安装失败，请查看终端日志')
+      installOutputLines.value.push('--- 依赖安装失败 ---')
     }
   } catch (err) {
-    alert(`安装失败: ${err.response?.data?.detail || err.message}`)
+    if (err.name === 'AbortError') {
+      installOutputLines.value.push('--- 安装已被用户取消 ---')
+    } else {
+      installOutputLines.value.push(`--- 安装失败: ${err.response?.data?.detail || err.message} ---`)
+    }
   } finally {
     installingDeps.value = false
+    installAbortController = null
     refresh()
+  }
+}
+
+function cancelInstall() {
+  if (installAbortController) {
+    installAbortController.abort()
   }
 }
 

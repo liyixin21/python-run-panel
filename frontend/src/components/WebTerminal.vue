@@ -97,7 +97,11 @@ async function initTerminal() {
 
 function connectWebSocket() {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-  const wsUrl = `${protocol}//${window.location.host}/ws/terminal/${props.projectId}`
+  const token = localStorage.getItem('auth_token')
+  let wsUrl = `${protocol}//${window.location.host}/ws/terminal/${props.projectId}`
+  if (token) {
+    wsUrl += `?token=${encodeURIComponent(token)}`
+  }
 
   ws = new WebSocket(wsUrl)
   ws.binaryType = 'arraybuffer'
