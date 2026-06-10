@@ -22,19 +22,6 @@ services:
           cpus: '0.25'
           memory: 256M
 
-    # 安全加固
-    security_opt:
-      - no-new-privileges:true
-    cap_drop:
-      - ALL
-    cap_add:
-      - SYS_PTRACE  # 子进程管理需要
-      - SETUID      # apt/_apt 用户切换需要
-      - SETGID      # apt/_apt 用户切换需要
-    tmpfs:
-      - /tmp
-      - /var/tmp
-
     # 日志轮转（最多保留 3 个文件，每个最大 10MB）
     logging:
       driver: "json-file"
