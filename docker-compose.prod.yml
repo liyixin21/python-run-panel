@@ -29,6 +29,8 @@ services:
       - ALL
     cap_add:
       - SYS_PTRACE  # 子进程管理需要
+      - SETUID      # apt/_apt 用户切换需要
+      - SETGID      # apt/_apt 用户切换需要
     tmpfs:
       - /tmp
       - /var/tmp
