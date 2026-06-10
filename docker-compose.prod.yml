@@ -22,14 +22,13 @@ services:
           cpus: '0.25'
           memory: 256M
 
-    # 安全和只读加固
+    # 安全加固
     security_opt:
       - no-new-privileges:true
     cap_drop:
       - ALL
     cap_add:
       - SYS_PTRACE  # 子进程管理需要
-    read_only: true
     tmpfs:
       - /tmp
       - /var/tmp
