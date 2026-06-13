@@ -216,6 +216,8 @@ class ProcessManager:
             return {"success": False, "message": "没有正在运行的进程"}
         if record.process.returncode is not None:
             record.append_log("[系统] 进程已经退出")
+            if record._port:
+                asyncio.create_task(self._close_firewall_port(record._port, project_id))
             return {"success": True, "message": "进程已经退出"}
 
         pid = record.process.pid
@@ -236,9 +238,14 @@ class ProcessManager:
                 except asyncio.TimeoutError:
                     os.killpg(os.getpgid(pid), signal.SIGKILL)
                     record.append_log("[系统] 进程超时未退出，已强制终止")
+            # 进程停止后，根据配置关闭防火墙端口
+            if record._port:
+                asyncio.create_task(self._close_firewall_port(record._port, project_id))
             return {"success": True, "message": "进程已停止"}
         except ProcessLookupError:
             record.append_log("[系统] 进程已不存在")
+            if record._port:
+                asyncio.create_task(self._close_firewall_port(record._port, project_id))
             return {"success": True, "message": "进程已不存在"}
         except Exception as e:
             logger.exception(f"停止进程失败: {e}")
@@ -301,10 +308,10 @@ class ProcessManager:
                     m = pat.search(line)
                     if m:
                         port = int(m.group(1))
-                        if 1024 <= port <= 65535:
-                            record.append_log(f"[系统] 检测到进程监听端口: {port}")
-                            await self._update_project_port(project_id, port)
-                            return
+                        record.append_log(f"[系统] 检测到进程监听端口: {port}")
+                        await self._update_project_port(project_id, port)
+                        await self._open_firewall_port(port, record._project_name, project_id)
+                        return
         except Exception:
             pass
 
@@ -325,10 +332,10 @@ class ProcessManager:
                             port_str = addr.rsplit(":", 1)[-1]
                             try:
                                 port = int(port_str)
-                                if 1024 <= port <= 65535:
-                                    record.append_log(f"[系统] 检测到进程监听端口: {port}")
-                                    await self._update_project_port(project_id, port)
-                                    return
+                                record.append_log(f"[系统] 检测到进程监听端口: {port}")
+                                await self._update_project_port(project_id, port)
+                                await self._open_firewall_port(port, record._project_name, project_id)
+                                return
                             except ValueError:
                                 continue
         except Exception as e:
@@ -346,6 +353,43 @@ class ProcessManager:
             if project:
                 project.port = port
                 await session.commit()
+
+    async def _open_firewall_port(self, port: int, project_name: str, project_id: int):
+        """根据防火墙配置决定是否自动放行端口。"""
+        from backend.config import load_firewall_config
+        from backend.services import firewall as firewall_service
+        config = load_firewall_config()
+        if not config.get("auto_open", True):
+            return
+        record = self._processes[project_id]
+        try:
+            was_open = await firewall_service.check_port(port)
+            ok = await firewall_service.open_port(port, project_name)
+            if ok:
+                if was_open:
+                    record.append_log(f"[系统] 端口 {port} 已存在于防火墙，无需重复放行")
+                else:
+                    record.append_log(f"[系统] 端口 {port} 已自动放行")
+            else:
+                record.append_log(f"[系统] 端口 {port} 自动放行失败，请检查 1Panel API 配置")
+        except Exception as e:
+            logger.warning(f"[防火墙] 放行端口 {port} 异常: {e}")
+
+    async def _close_firewall_port(self, port: int, project_id: int):
+        """根据防火墙配置决定是否关闭端口规则。"""
+        from backend.config import load_firewall_config
+        from backend.services import firewall as firewall_service
+        config = load_firewall_config()
+        if config.get("keep_rules", False):
+            return
+        record = self._processes[project_id]
+        try:
+            was_open = await firewall_service.check_port(port)
+            ok = await firewall_service.close_port(port)
+            if ok and was_open:
+                record.append_log(f"[系统] 防火墙端口 {port} 规则已移除")
+        except Exception as e:
+            logger.warning(f"[防火墙] 关闭端口 {port} 异常: {e}")
 
     # ---------- APScheduler 定时任务 ----------
 

@@ -34,7 +34,9 @@
             {{ showTerminal ? '▾ 关闭终端' : '▸ 打开终端' }}
           </button>
           <span v-if="project.pid" class="text-xs text-gray-400">PID: {{ project.pid }}</span>
-          <span v-if="project.port" class="text-xs text-blue-600 dark:text-blue-400">监听端口: {{ project.port }}</span>
+          <span v-if="project.port" class="text-xs text-blue-600 dark:text-blue-400">监听端口: {{ project.port }}
+            <span v-if="fwOpen !== null" :class="fwOpen ? 'text-green-600 dark:text-green-400' : 'text-red-500 dark:text-red-400'" class="ml-1">({{ fwOpen ? '已放行' : '未放行' }})</span>
+          </span>
           <label class="flex items-center gap-2 ml-auto cursor-pointer select-none">
             <input type="checkbox" v-model="autoRestart" @change="saveAutoRestart" class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500" />
             <span class="text-xs text-gray-500 dark:text-gray-400">进程崩溃自动重启</span>
@@ -150,6 +152,7 @@ import { getProject, updateProject, startProcess, stopProcess, restartProcess,
   getProcessLogs, clearProcessLogs, getSchedules, setSchedules,
   installPackage, uninstallPackage, getInstalledPackages,
 } from '../api/index.js'
+import api from '../api/index.js'
 import FileManager from '../components/FileManager.vue'
 import WebTerminal from '../components/WebTerminal.vue'
 
@@ -176,6 +179,7 @@ const installingPackage = ref(false)
 const installedPackages = ref([])
 const loadingInstalled = ref(false)
 const removingPackage = ref(null)
+const fwOpen = ref(null)
 
 let logWs = null
 const logWsConnected = ref(false)
@@ -244,13 +248,15 @@ async function start() {
   try {
     await startProcess(project.value.id, { entry_file: project.value.entry_file, start_cmd: project.value.start_cmd, auto_restart: autoRestart.value })
     await fetchProject(); if (logWs) logWs.close(); connectLogWebSocket()
+    setTimeout(checkFirewall, 5000) // 等待端口检测完成
   } catch (err) { alert(`启动失败: ${err.response?.data?.detail || err.message}`) }
 }
-async function stop() { try { await stopProcess(project.value.id); await fetchProject() } catch (e) { alert(e.response?.data?.detail || e.message) } }
+async function stop() { try { await stopProcess(project.value.id); await fetchProject(); checkFirewall() } catch (e) { alert(e.response?.data?.detail || e.message) } }
 async function restart() {
   try {
     await restartProcess(project.value.id, { entry_file: project.value.entry_file, start_cmd: project.value.start_cmd, auto_restart: autoRestart.value })
     await fetchProject(); if (logWs) logWs.close(); connectLogWebSocket()
+    setTimeout(checkFirewall, 5000)
   } catch (e) { alert(e.response?.data?.detail || e.message) }
 }
 
@@ -302,7 +308,16 @@ async function removePackage(name) {
   finally { removingPackage.value = null }
 }
 
+async function checkFirewall() {
+  if (project.value?.port) {
+    try {
+      const res = await api.get('/api/firewall/check', { params: { port: project.value.port } })
+      fwOpen.value = res.data.open
+    } catch (e) { fwOpen.value = null }
+  }
+}
+
 provide('refresh', fetchProject)
-onMounted(async () => { await fetchProject(); refreshInstalledPackages(); connectLogWebSocket() })
+onMounted(async () => { await fetchProject(); refreshInstalledPackages(); connectLogWebSocket(); checkFirewall() })
 onBeforeUnmount(() => { if (logWs) logWs.close() })
 </script>

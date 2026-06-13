@@ -40,8 +40,13 @@
     <div class="border-t border-gray-100 dark:border-gray-700"></div>
 
     <div class="px-5 py-3 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
-      <span v-if="project.port">监听端口: {{ project.port }}</span>
-      <span v-else>端口: 未检测</span>
+      <div class="flex items-center gap-2">
+        <span v-if="project.port">监听端口: {{ project.port }}</span>
+        <span v-else>端口: 未检测</span>
+        <span v-if="project.port && fwOpen !== null" :class="fwOpen ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400' : 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'" class="px-1.5 py-0.5 rounded text-[10px] font-medium">
+          {{ fwOpen ? '已放行' : '未放行' }}
+        </span>
+      </div>
       <span>入口: {{ project.entry_file }}</span>
     </div>
 
@@ -73,6 +78,9 @@ const refresh = inject('refresh')
 
 const showMenu = ref(false)
 const toast = ref({ show: false, type: 'success', message: '' })
+const fwOpen = ref(null)
+
+import api from '../api/index.js'
 
 const statusClass = computed(() => {
   switch (props.project.status) {
@@ -101,7 +109,18 @@ async function handleDelete() {
 }
 
 function closeMenu() { showMenu.value = false }
-onMounted(() => document.addEventListener('click', closeMenu))
+onMounted(async () => {
+  document.addEventListener('click', closeMenu)
+  // 检查防火墙端口状态
+  if (props.project.port) {
+    try {
+      const res = await api.get('/api/firewall/check', { params: { port: props.project.port } })
+      fwOpen.value = res.data.open
+    } catch (e) {
+      fwOpen.value = null
+    }
+  }
+})
 onUnmounted(() => document.removeEventListener('click', closeMenu))
 </script>
 

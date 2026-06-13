@@ -16,7 +16,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.config import STATIC_DIR, WORKSPACE_DIR
 from backend.database import init_db
 from backend.services.process_manager import process_manager
-from backend.routers import projects, processes, files, terminal, packages, auth, settings
+from backend.routers import projects, processes, files, terminal, packages, auth, settings, firewall
 
 # 配置日志
 logging.basicConfig(
@@ -77,6 +77,7 @@ app.include_router(files.router, dependencies=[auth.verify_token])
 app.include_router(packages.router, dependencies=[auth.verify_token])
 app.include_router(terminal.router)
 app.include_router(settings.router, dependencies=[auth.verify_token])
+app.include_router(firewall.router, dependencies=[auth.verify_token])
 
 
 # WebSocket 实时日志推送端点（必须在 StaticFiles mount 之前注册）
