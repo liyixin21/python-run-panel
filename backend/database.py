@@ -65,6 +65,13 @@ async def _migrate_schema(conn):
                 "ALTER TABLE projects ADD COLUMN start_cmd VARCHAR(512) DEFAULT '' NOT NULL"
             ))
             logger.info("start_cmd 列已添加")
+
+        if "auto_start" not in columns:
+            logger.info("正在添加 auto_start 列...")
+            await conn.execute(text(
+                "ALTER TABLE projects ADD COLUMN auto_start BOOLEAN DEFAULT 0 NOT NULL"
+            ))
+            logger.info("auto_start 列已添加")
     except Exception as e:
         logger.warning(f"数据库迁移失败 (非致命): {e}")
 

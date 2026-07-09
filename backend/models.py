@@ -43,6 +43,7 @@ class Project(Base):
     status = Column(Enum(ProjectStatus), default=ProjectStatus.STOPPED, nullable=False)
     pid = Column(Integer, nullable=True)
     auto_restart = Column(Boolean, default=False, comment="进程意外退出时是否自动重启")
+    auto_start = Column(Boolean, default=False, comment="面板启动时是否自动启动项目")
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

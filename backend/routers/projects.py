@@ -24,6 +24,7 @@ class ProjectUpdateRequest(BaseModel):
     entry_file: str | None = Field(None, max_length=256)
     start_cmd: str | None = Field(None, max_length=512)
     auto_restart: bool | None = Field(None)
+    auto_start: bool | None = Field(None)
 
 
 class ProjectResponse(BaseModel):
@@ -35,6 +36,7 @@ class ProjectResponse(BaseModel):
     start_cmd: str
     port: int | None
     auto_restart: bool
+    auto_start: bool
     status: str
     pid: int | None
     created_at: str
@@ -55,6 +57,7 @@ def _make_response(project: Project) -> dict:
         "start_cmd": project.start_cmd or "",
         "port": project.port,
         "auto_restart": project.auto_restart,
+        "auto_start": project.auto_start,
         "status": "running" if status_info["running"] else "stopped",
         "pid": status_info["pid"],
         "created_at": project.created_at.isoformat() if project.created_at else "",
@@ -123,6 +126,8 @@ async def update_project(identifier: str, req: ProjectUpdateRequest,
         project.start_cmd = req.start_cmd
     if req.auto_restart is not None:
         project.auto_restart = req.auto_restart
+    if req.auto_start is not None:
+        project.auto_start = req.auto_start
 
     await session.commit()
     await session.refresh(project)

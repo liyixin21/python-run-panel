@@ -4,6 +4,7 @@ FastAPI 应用入口文件
 - 注册所有路由
 - 挂载静态文件（前端构建产物）
 """
+import asyncio
 import os
 import logging
 from contextlib import asynccontextmanager
@@ -43,11 +44,51 @@ async def lifespan(app: FastAPI):
     process_manager.init_scheduler()
     logger.info("APScheduler 调度器已启动")
 
+    # 自动启动配置了 auto_start 的项目
+    asyncio.create_task(_auto_start_projects())
+
     yield
 
     # 关闭阶段
     process_manager.shutdown_scheduler()
     logger.info("应用已关闭")
+
+
+async def _auto_start_projects():
+    """面板启动后，自动启动所有配置了 auto_start=True 的项目"""
+    try:
+        from backend.models import Project
+        from backend.database import async_session
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(Project).where(Project.auto_start == True)
+            )
+            projects = result.scalars().all()
+
+        if not projects:
+            return
+
+        logger.info(f"正在自动启动 {len(projects)} 个项目...")
+        for project in projects:
+            try:
+                result = await process_manager.start_process(
+                    project_id=project.id,
+                    project_name=project.name,
+                    entry_file=project.entry_file,
+                    port=project.port,
+                    start_cmd=project.start_cmd or "",
+                )
+                if result["success"]:
+                    logger.info(f"  项目 '{project.name}' 已自动启动 (PID={result.get('pid')})")
+                else:
+                    logger.warning(f"  项目 '{project.name}' 自动启动失败: {result.get('message')}")
+            except Exception as e:
+                logger.error(f"  项目 '{project.name}' 自动启动异常: {e}")
+        logger.info("自动启动完成")
+    except Exception as e:
+        logger.error(f"自动启动项目失败: {e}")
 
 
 app = FastAPI(

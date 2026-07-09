@@ -39,7 +39,11 @@
           </span>
           <label class="flex items-center gap-2 ml-auto cursor-pointer select-none">
             <input type="checkbox" v-model="autoRestart" @change="saveAutoRestart" class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500" />
-            <span class="text-xs text-gray-500 dark:text-gray-400">进程崩溃自动重启</span>
+            <span class="text-xs text-gray-500 dark:text-gray-400">崩溃自动重启</span>
+          </label>
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" v-model="autoStart" @change="saveAutoStart" class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500" />
+            <span class="text-xs text-gray-500 dark:text-gray-400">面板启动时自启</span>
           </label>
         </div>
 
@@ -140,6 +144,7 @@ const logText = ref('')
 const logContainer = ref(null)
 const showTerminal = ref(false)
 const autoRestart = ref(false)
+const autoStart = ref(false)
 
 const editForm = ref({ entry_file: 'main.py', start_cmd: '' })
 const savingSettings = ref(false)
@@ -198,6 +203,7 @@ async function fetchProject() {
     project.value = projRes.data
     logText.value = logRes.data.logs || ''
     autoRestart.value = project.value.auto_restart || false
+    autoStart.value = project.value.auto_start || false
     editForm.value = { entry_file: project.value.entry_file || 'main.py', start_cmd: project.value.start_cmd || '' }
     nextTick(() => scrollLogToBottom())
   } catch (err) { console.error(err); project.value = null }
@@ -231,6 +237,11 @@ async function saveSettings() {
 
 async function saveAutoRestart() {
   try { await updateProject(projectName.value, { auto_restart: autoRestart.value }); project.value.auto_restart = autoRestart.value }
+  catch (e) { alert(e.response?.data?.detail || e.message) }
+}
+
+async function saveAutoStart() {
+  try { await updateProject(projectName.value, { auto_start: autoStart.value }); project.value.auto_start = autoStart.value }
   catch (e) { alert(e.response?.data?.detail || e.message) }
 }
 
