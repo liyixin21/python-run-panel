@@ -1,8 +1,10 @@
 """
 认证 API 路由
 提供登录、登出、Token 验证功能。
-用户名密码存储于 SQLite，Token 存储在内存中（24 小时有效）。
+用户名密码存储于 SQLite，Token 持久化到 workspace/tokens.json（24 小时有效）。
 """
+import json
+import os
 import secrets
 import time
 import logging
@@ -15,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_session
 from backend.models import PanelUser
 from backend.utils import verify_password, hash_password
+from backend.config import WORKSPACE_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +25,39 @@ router = APIRouter(prefix="/api/auth", tags=["认证"])
 
 # 有效 token 集合：{token: expire_timestamp}
 _valid_tokens: dict[str, float] = {}
-TOKEN_EXPIRE_SECONDS = 24 * 3600  # 24 小时
+TOKEN_EXPIRE_SECONDS = 6 * 3600  # 6 小时
+_TOKENS_FILE = os.path.join(WORKSPACE_DIR, "tokens.json")
+
+
+def _save_tokens():
+    """将 token 持久化到文件。"""
+    try:
+        os.makedirs(WORKSPACE_DIR, exist_ok=True)
+        with open(_TOKENS_FILE, "w", encoding="utf-8") as f:
+            json.dump(_valid_tokens, f)
+    except Exception as e:
+        logger.warning(f"持久化 token 失败: {e}")
+
+
+def _load_tokens():
+    """从文件恢复 token。"""
+    global _valid_tokens
+    try:
+        if os.path.exists(_TOKENS_FILE):
+            with open(_TOKENS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict):
+                now = time.time()
+                _valid_tokens = {k: v for k, v in data.items() if isinstance(v, (int, float)) and v > now}
+                if len(_valid_tokens) < len(data):
+                    _save_tokens()
+                logger.info(f"已从文件恢复 {len(_valid_tokens)} 个 token")
+    except Exception as e:
+        logger.warning(f"恢复 token 失败: {e}")
+
+
+# 启动时加载已持久化的 token
+_load_tokens()
 
 
 def _generate_token() -> str:
@@ -32,8 +67,10 @@ def _generate_token() -> str:
 def _clean_expired():
     now = time.time()
     expired = [t for t, exp in _valid_tokens.items() if exp < now]
-    for t in expired:
-        del _valid_tokens[t]
+    if expired:
+        for t in expired:
+            del _valid_tokens[t]
+        _save_tokens()
 
 
 @router.post("/login")
@@ -58,6 +95,7 @@ async def login(body: dict, session: AsyncSession = Depends(get_session)):
     _clean_expired()
     token = _generate_token()
     _valid_tokens[token] = time.time() + TOKEN_EXPIRE_SECONDS
+    _save_tokens()
     logger.info(f"用户 '{username}' 已登录")
     return {"token": token, "username": username, "expires_in": TOKEN_EXPIRE_SECONDS}
 
@@ -65,6 +103,7 @@ async def login(body: dict, session: AsyncSession = Depends(get_session)):
 @router.post("/logout")
 async def logout(token: str = Depends(lambda authorization: _require_token(authorization))):
     _valid_tokens.pop(token, None)
+    _save_tokens()
     logger.info("用户已登出")
     return {"success": True, "message": "已登出"}
 

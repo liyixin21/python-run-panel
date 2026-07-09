@@ -44,22 +44,19 @@
         </div>
 
         <!-- 项目设置行 -->
-        <div class="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-2">
-          <div class="flex items-center gap-3 flex-wrap">
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-gray-400 flex-shrink-0">入口文件:</span>
-              <input v-model="editForm.entry_file"
-                class="w-32 px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-mono focus:ring-1 focus:ring-blue-500 outline-none" />
-            </div>
-            <span class="text-xs text-gray-400">|</span>
-            <div class="flex items-center gap-2 flex-1 min-w-0">
-              <span class="text-xs text-gray-400 flex-shrink-0">启动命令 (高级):</span>
-              <input v-model="editForm.start_cmd"
-                class="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-mono focus:ring-1 focus:ring-blue-500 outline-none"
-                placeholder="留空使用默认启动" />
-            </div>
+        <div class="border-t border-gray-100 dark:border-gray-700 pt-3 space-y-3">
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-400 flex-shrink-0">入口文件:</span>
+            <input v-model="editForm.entry_file"
+              class="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-mono focus:ring-1 focus:ring-blue-500 outline-none" />
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="text-xs text-gray-400 flex-shrink-0">启动命令:</span>
+            <input v-model="editForm.start_cmd"
+              class="flex-1 min-w-0 px-2 py-1 text-xs rounded border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-700 dark:text-gray-200 font-mono focus:ring-1 focus:ring-blue-500 outline-none"
+              placeholder="留空使用默认 python 入口文件" />
             <button @click="saveSettings" :disabled="savingSettings"
-              class="px-3 py-1 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">
+              class="px-3 py-1 text-xs font-medium rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors flex-shrink-0">
               {{ savingSettings ? '...' : '保存' }}
             </button>
           </div>
@@ -84,29 +81,7 @@
               </h3>
               <button @click="clearLogs" class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">清屏</button>
             </div>
-            <pre ref="logContainer" class="p-4 text-xs font-mono text-gray-300 bg-gray-900 dark:bg-black h-80 overflow-y-auto whitespace-pre-wrap break-all">{{ logText || '暂无日志' }}</pre>
-          </div>
-
-          <!-- 定时任务 -->
-          <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-white mb-3">定时任务</h3>
-            <div class="flex items-center gap-4 mb-4">
-              <label class="flex items-center gap-2 cursor-pointer">
-                <input type="checkbox" v-model="scheduleEnabled" @change="onScheduleToggle" class="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-blue-600 focus:ring-blue-500" />
-                <span class="text-xs text-gray-600 dark:text-gray-300">启用定时策略</span>
-              </label>
-            </div>
-            <div v-if="scheduleEnabled" class="space-y-3">
-              <div class="grid grid-cols-2 gap-3">
-                <div><label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每天启动时间</label><input type="time" v-model="scheduleForm.start_time" class="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" /></div>
-                <div><label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每天关闭时间</label><input type="time" v-model="scheduleForm.stop_time" class="w-full px-2.5 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-blue-500 outline-none" /></div>
-              </div>
-              <div class="flex flex-wrap gap-1.5">
-                <span class="text-xs text-gray-400 py-1">快捷:</span>
-                <button v-for="preset in timePresets" :key="preset.label" @click="applyPreset(preset)" class="px-2 py-0.5 text-xs rounded border border-gray-200 dark:border-gray-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 text-gray-500 dark:text-gray-400 hover:text-blue-600 dark:hover:text-blue-400 transition-colors">{{ preset.label }}</button>
-              </div>
-              <button @click="saveSchedules" :disabled="savingSchedules" class="px-4 py-2 text-sm font-medium rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors">{{ savingSchedules ? '保存中...' : '保存定时配置' }}</button>
-            </div>
+            <pre ref="logContainer" class="p-4 text-xs font-mono text-gray-300 bg-gray-900 dark:bg-black h-48 sm:h-80 overflow-y-auto whitespace-pre-wrap break-all" style="scroll-behavior: auto;">{{ logText || '暂无日志' }}</pre>
           </div>
 
           <!-- 依赖管理 -->
@@ -149,7 +124,7 @@
 import { ref, onMounted, onBeforeUnmount, computed, provide, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
 import { getProject, updateProject, startProcess, stopProcess, restartProcess,
-  getProcessLogs, clearProcessLogs, getSchedules, setSchedules,
+  getProcessLogs, clearProcessLogs,
   installPackage, uninstallPackage, getInstalledPackages,
 } from '../api/index.js'
 import api from '../api/index.js'
@@ -169,11 +144,6 @@ const autoRestart = ref(false)
 const editForm = ref({ entry_file: 'main.py', start_cmd: '' })
 const savingSettings = ref(false)
 
-const scheduleEnabled = ref(false)
-const scheduleForm = ref({ start_time: '', stop_time: '' })
-const existingSchedules = ref([])
-const savingSchedules = ref(false)
-
 const packageToInstall = ref('')
 const installingPackage = ref(false)
 const installedPackages = ref([])
@@ -183,18 +153,6 @@ const fwOpen = ref(null)
 
 let logWs = null
 const logWsConnected = ref(false)
-
-const timePresets = [
-  { label: '08:00-18:00', start_time: '08:00', stop_time: '18:00' },
-  { label: '09:00-17:00', start_time: '09:00', stop_time: '17:00' },
-  { label: '08:00-22:00', start_time: '08:00', stop_time: '22:00' },
-  { label: '全天运行', start_time: '00:00', stop_time: '23:59' },
-]
-
-function applyPreset(p) { scheduleForm.value.start_time = p.start_time; scheduleForm.value.stop_time = p.stop_time }
-
-function timeToCron(t) { if (!t) return null; const [h, m] = t.split(':').map(Number); return `${m} ${h} * * *` }
-function cronToTime(c) { if (!c) return ''; const p = c.split(' '); return `${p[1].padStart(2,'0')}:${p[0].padStart(2,'0')}` }
 
 function connectLogWebSocket() {
   if (!project.value?.id) return
@@ -208,9 +166,17 @@ function connectLogWebSocket() {
   logWs.onopen = () => { logWsConnected.value = true }
   logWs.onmessage = (event) => {
     logText.value += (logText.value ? '\n' : '') + event.data
-    nextTick(() => { if (logContainer.value) logContainer.value.scrollTop = logContainer.value.scrollHeight })
+    scrollLogToBottom()
   }
   logWs.onclose = () => { logWsConnected.value = false }
+}
+
+function scrollLogToBottom() {
+  requestAnimationFrame(() => {
+    if (logContainer.value) {
+      logContainer.value.scrollTop = logContainer.value.scrollHeight
+    }
+  })
 }
 
 async function clearLogs() {
@@ -225,21 +191,15 @@ async function clearLogs() {
 async function fetchProject() {
   loading.value = true
   try {
-    const [projRes, schedRes, logRes] = await Promise.all([
+    const [projRes, logRes] = await Promise.all([
       getProject(projectName.value),
-      getSchedules(projectName.value).catch(() => ({ data: [] })),
       getProcessLogs(projectName.value).catch(() => ({ data: { logs: '' } })),
     ])
     project.value = projRes.data
-    existingSchedules.value = schedRes.data
     logText.value = logRes.data.logs || ''
     autoRestart.value = project.value.auto_restart || false
     editForm.value = { entry_file: project.value.entry_file || 'main.py', start_cmd: project.value.start_cmd || '' }
-    const ss = existingSchedules.value.find(s => s.job_type === 'start')
-    const se = existingSchedules.value.find(s => s.job_type === 'stop')
-    scheduleEnabled.value = !!(ss || se)
-    scheduleForm.value.start_time = cronToTime(ss?.cron_expression)
-    scheduleForm.value.stop_time = cronToTime(se?.cron_expression)
+    nextTick(() => scrollLogToBottom())
   } catch (err) { console.error(err); project.value = null }
   finally { loading.value = false }
 }
@@ -272,17 +232,6 @@ async function saveSettings() {
 async function saveAutoRestart() {
   try { await updateProject(projectName.value, { auto_restart: autoRestart.value }); project.value.auto_restart = autoRestart.value }
   catch (e) { alert(e.response?.data?.detail || e.message) }
-}
-
-async function onScheduleToggle() { if (!scheduleEnabled.value) await saveSchedules() }
-async function saveSchedules() {
-  savingSchedules.value = true
-  try {
-    if (!scheduleEnabled.value) await setSchedules(projectName.value, { cron_start: null, cron_stop: null })
-    else await setSchedules(projectName.value, { cron_start: timeToCron(scheduleForm.value.start_time), cron_stop: timeToCron(scheduleForm.value.stop_time) })
-    existingSchedules.value = (await getSchedules(projectName.value)).data
-  } catch (e) { alert(e.response?.data?.detail || e.message) }
-  finally { savingSchedules.value = false }
 }
 
 async function refreshInstalledPackages() {

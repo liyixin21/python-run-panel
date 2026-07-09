@@ -1,6 +1,6 @@
 import axios from 'axios'
 
-const api = axios.create({ baseURL: '/', timeout: 30000 })
+const api = axios.create({ baseURL: '/', timeout: 120000 })
 
 // 请求拦截器：自动附加认证 token
 api.interceptors.request.use((config) => {
@@ -28,9 +28,6 @@ export function createProject(data) { return api.post('/api/projects/', data) }
 export function getProject(name) { return api.get(`/api/projects/${encodeURIComponent(name)}`) }
 export function updateProject(name, data) { return api.put(`/api/projects/${encodeURIComponent(name)}`, data) }
 export function deleteProject(name) { return api.delete(`/api/projects/${encodeURIComponent(name)}`) }
-
-export function getSchedules(projectId) { return api.get(`/api/projects/${projectId}/schedules`) }
-export function setSchedules(projectId, data) { return api.post(`/api/projects/${projectId}/schedules`, data) }
 
 export function startProcess(id, data) { return api.post(`/api/processes/${id}/start`, data || {}) }
 export function stopProcess(id, force = false) { return api.post(`/api/processes/${id}/stop`, null, { params: { force } }) }

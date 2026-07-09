@@ -218,9 +218,10 @@ async function testAndSave() {
   }
   // 连接成功，保存配置
   try {
+    const originalApiKey = fwSettings.value.api_key
     const res = await api.put('/api/firewall/settings', { ...fwSettings.value })
     fwSettings.value = res.data.config
-    if (res.data.config.api_key === '***') fwSettings.value.api_key = fwSettings.value.api_key
+    if (res.data.config.api_key === '***') fwSettings.value.api_key = originalApiKey
     fwOk.value = true
     fwMsg.value = '已保存'
     setTimeout(() => { fwMsg.value = '' }, 2000)

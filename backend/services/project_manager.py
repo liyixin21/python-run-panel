@@ -35,7 +35,7 @@ class ProjectManager:
 
     async def create_project(self, project_name: str) -> dict:
         """
-        创建新项目：
+        创建新项目（幂等：目录已存在且 venv 完整时直接复用）：
         1. 在 workspace 下建立项目文件夹
         2. 使用 python -m venv 创建专属虚拟环境
         3. 配置 pip 清华镜像源
@@ -44,8 +44,18 @@ class ProjectManager:
         project_dir = self._get_project_dir(project_name)
         venv_dir = self._get_venv_dir(project_name)
 
+        # 如果目录已存在，检查 venv 是否完整
         if os.path.exists(project_dir):
-            raise FileExistsError(f"项目文件夹已存在: {project_dir}")
+            if self._is_venv_valid(venv_dir):
+                logger.info(f"项目 '{project_name}' 目录和虚拟环境已存在，直接复用")
+                return {
+                    "name": project_name,
+                    "directory": project_dir,
+                    "venv_path": venv_dir,
+                }
+            # venv 不完整，清理后重新创建
+            logger.warning(f"项目 '{project_name}' 目录存在但 venv 不完整，清理并重建...")
+            shutil.rmtree(project_dir, ignore_errors=True)
 
         try:
             os.makedirs(project_dir, exist_ok=True)
@@ -76,6 +86,13 @@ class ProjectManager:
         except Exception:
             shutil.rmtree(project_dir, ignore_errors=True)
             raise
+
+    @staticmethod
+    def _is_venv_valid(venv_dir: str) -> bool:
+        """检查虚拟环境是否完整可用（python 和 pip 可执行文件存在）"""
+        python_bin = os.path.join(venv_dir, "bin", "python")
+        pip_bin = os.path.join(venv_dir, "bin", "pip")
+        return os.path.isfile(python_bin) and os.path.isfile(pip_bin)
 
     def delete_project(self, project_name: str) -> None:
         """

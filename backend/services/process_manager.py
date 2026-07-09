@@ -136,6 +136,7 @@ class ProcessManager:
         env = os.environ.copy()
         env["VIRTUAL_ENV"] = project_manager._get_venv_dir(project_name)
         env["PATH"] = f"{project_manager._get_venv_dir(project_name)}/bin:{env.get('PATH', '')}"
+        env["PYTHONUNBUFFERED"] = "1"
         if port is not None:
             env["PORT"] = str(port)
 
