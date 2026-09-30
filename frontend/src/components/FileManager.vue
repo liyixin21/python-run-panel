@@ -308,6 +308,7 @@
 <script setup>
 import { ref, computed, watch, nextTick, inject } from 'vue'
 import { listFiles, uploadFiles, deleteFile, createDir, installRequirements, readFile, writeFile } from '../api/index.js'
+import { useDragUpload } from '../composables/useDragUpload.js'
 
 const props = defineProps({
   projectId: { type: Number, required: true },
@@ -320,7 +321,6 @@ const files = ref([])
 const loading = ref(false)
 const uploading = ref(false)
 const uploadProgress = ref(0)
-const dragover = ref(false)
 const showNewDirInput = ref(false)
 const newDirName = ref('')
 const dirInput = ref(null)
@@ -341,9 +341,6 @@ const editingFile = ref(null)
 const editorContent = ref('')
 const editorLoading = ref(false)
 const savingFile = ref(false)
-
-// 拖拽计数器（防止子元素触发 dragleave）
-let dragCounter = 0
 
 const breadcrumbs = computed(() => {
   if (!currentPath.value) return []
@@ -374,154 +371,6 @@ function goUp() {
   const parts = currentPath.value.split('/').filter(Boolean)
   parts.pop()
   currentPath.value = parts.join('/')
-}
-
-function onDragEnter() {
-  dragCounter++
-  dragover.value = true
-}
-
-function onDragOver() {
-  dragover.value = true
-}
-
-function onDragLeave() {
-  dragCounter--
-  if (dragCounter <= 0) {
-    dragCounter = 0
-    dragover.value = false
-  }
-}
-
-async function onDrop(e) {
-  dragover.value = false
-  dragCounter = 0
-
-  const items = e.dataTransfer?.items
-  if (!items) return
-
-  // ================================================================
-  // 核心修复：DataTransferItemList 是实时集合，与拖拽事件生命周期绑定。
-  // 一旦在 await 后让出事件循环，浏览器可能清理 DataTransfer，
-  // 导致后续 DataTransferItem.webkitGetAsEntry() 返回 null。
-  // 因此必须【在任何 await 之前】同步提取所有 FileSystemEntry，
-  // 将其存入普通数组，断开与实时集合的依赖。
-  // ================================================================
-  const rootEntries = []
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]
-    if (!item || item.kind !== 'file') continue
-
-    // 尝试获取 FileSystemEntry（目录或文件）
-    const getEntry = item.webkitGetAsEntry || item.getAsEntry
-    const entry = getEntry ? getEntry.call(item) : null
-
-    if (entry) {
-      rootEntries.push(entry)
-    } else {
-      // fallback：无 Entry API 时直接用 getAsFile() 获取文件
-      const file = item.getAsFile()
-      if (file) {
-        rootEntries.push(file)
-      }
-    }
-  }
-
-  const fileList = []
-  // 现在所有条目都已脱离 DataTransferItemList，可以安全异步处理
-  await processEntries(rootEntries, fileList)
-
-  if (fileList.length > 0) {
-    await doUpload(fileList)
-  }
-}
-
-/**
- * 处理根级条目列表（FileSystemEntry 或 File 的混合数组）。
- * 所有条目已在同步阶段从 DataTransferItemList 中提取，可安全异步遍历。
- */
-async function processEntries(entries, fileList) {
-  for (const entry of entries) {
-    // 如果是已提取的 File 对象（fallback 路径）
-    if (entry instanceof File) {
-      fileList.push(entry)
-      continue
-    }
-    if (entry.isDirectory) {
-      await readDirectoryEntries(entry, fileList)
-    } else if (entry.isFile) {
-      try {
-        const file = await new Promise((resolve, reject) => entry.file(resolve, reject))
-        if (file && entry.fullPath) {
-          Object.defineProperty(file, '_webkit_relative_path', {
-            value: entry.fullPath.replace(/^\//, ''),
-            writable: false,
-          })
-        }
-        if (file) fileList.push(file)
-      } catch (err) {
-        console.warn('读取文件条目失败:', err)
-      }
-    }
-  }
-}
-
-/**
- * 递归读取目录中的所有文件。
- * ================================================================
- * 关键设计：分两步解决异步回调问题
- * 1. 同步阶段 — 使用同步回调批量收集所有 FileSystemEntry
- * 2. 异步阶段 — 遍历收集到的条目，逐个异步读取文件内容
- *
- * 避免在 reader.readEntries 的回调中使用 async/await，
- * 因为 readEntries 忽略回调的 Promise 返回值，
- * 异步操作可能导致批次错乱或条目丢失。
- * ================================================================
- */
-function readDirectoryEntries(dirEntry, fileList) {
-  return new Promise((resolve, reject) => {
-    const reader = dirEntry.createReader()
-    const allEntries = []
-
-    // 阶段 1：同步收集所有条目
-    const readBatch = () => {
-      reader.readEntries((entries) => {
-        if (entries.length === 0) {
-          // 收集完毕，进入异步处理阶段
-          processDirectoryEntries(allEntries, fileList).then(resolve).catch(reject)
-          return
-        }
-        allEntries.push(...entries)
-        readBatch()
-      }, reject)
-    }
-    readBatch()
-  })
-}
-
-/**
- * 异步处理已收集的目录条目列表。
- * 此时已脱离 readEntries 的回调上下文，可以安全使用 async/await。
- */
-async function processDirectoryEntries(entries, fileList) {
-  for (const entry of entries) {
-    if (entry.isFile) {
-      try {
-        const file = await new Promise((res, rej) => entry.file(res, rej))
-        if (file && entry.fullPath) {
-          Object.defineProperty(file, '_webkit_relative_path', {
-            value: entry.fullPath.replace(/^\//, ''),
-            writable: false,
-          })
-        }
-        if (file) fileList.push(file)
-      } catch (err) {
-        console.warn('读取文件失败:', err)
-      }
-    } else if (entry.isDirectory) {
-      await readDirectoryEntries(entry, fileList)
-    }
-  }
 }
 
 function onFileInputChange(e) {
@@ -581,6 +430,11 @@ async function doUpload(fileList) {
     uploadProgress.value = 0
   }
 }
+
+// 拖拽上传：逻辑已抽到 useDragUpload（含 DataTransfer 生命周期处理）
+const { dragover, onDragEnter, onDragOver, onDragLeave, onDrop } = useDragUpload({
+  onFiles: doUpload,
+})
 
 async function installReqs() {
   installingReqs.value = true

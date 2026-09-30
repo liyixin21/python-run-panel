@@ -21,6 +21,15 @@ STATIC_DIR = os.environ.get("STATIC_DIR", os.path.join(os.path.dirname(__file__)
 # 面板登录密码（通过环境变量 PANEL_PASSWORD 设置，默认 admin）
 PANEL_PASSWORD = os.environ.get("PANEL_PASSWORD", "admin")
 
+# CORS 允许来源（逗号分隔）。留空表示不启用 CORS 中间件——
+# 前后端同源部署时无需 CORS，且 "*" 与 credentials 互斥不会生效。
+CORS_ORIGINS = [
+    o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()
+]
+
+# 登录 token 有效期（秒）。默认 24 小时，与 auth 模块的说明保持一致。
+TOKEN_EXPIRE_SECONDS = int(os.environ.get("TOKEN_EXPIRE_SECONDS", 24 * 3600))
+
 # 防火墙配置文件路径
 FIREWALL_CONFIG_FILE = os.path.join(WORKSPACE_DIR, "firewall_config.json")
 

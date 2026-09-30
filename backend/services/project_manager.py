@@ -2,16 +2,24 @@
 ProjectManager 服务类
 负责项目文件夹的创建、删除，以及 Python 虚拟环境 (venv) 的生成与销毁。
 确保不同项目间的依赖绝对隔离。
+
+所有涉及项目名拼接路径的操作都经过 utils.safe_join 做边界校验，
+防止项目名中含 "../" 时在 workspace 之外读写甚至递归删除。
 """
 import os
 import shutil
-import subprocess
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from backend.config import WORKSPACE_DIR
+from backend.utils import safe_join, PathSecurityError, validate_project_name
 
 logger = logging.getLogger(__name__)
+
+
+class ProjectExistsError(Exception):
+    """同名项目已存在。"""
 
 
 class ProjectManager:
@@ -20,27 +28,46 @@ class ProjectManager:
     - 创建项目时自动生成独立文件夹和专属 venv
     - 删除项目时安全清理文件夹及相关资源
     - 提供端口分配与释放逻辑
+    - 按项目名加锁，避免并发创建时互相踩踏
     """
 
     def __init__(self):
         os.makedirs(WORKSPACE_DIR, exist_ok=True)
+        # 每个项目名一把锁：把「检查 → 建目录 → 提交」串行化
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    # ---------- 并发控制 ----------
+
+    @asynccontextmanager
+    async def lock_for(self, project_name: str):
+        """按项目名加互斥锁，避免同名项目的并发创建互相破坏。"""
+        lock = self._locks.setdefault(project_name, asyncio.Lock())
+        async with lock:
+            yield
+        # 锁未被占用时顺手回收，避免 _locks 无限增长
+        if not lock.locked() and not getattr(lock, "_waiters", None):
+            self._locks.pop(project_name, None)
+
+    # ---------- 路径 ----------
 
     def _get_project_dir(self, project_name: str) -> str:
-        """返回指定项目的文件夹绝对路径"""
-        return os.path.join(WORKSPACE_DIR, project_name)
+        """返回指定项目的文件夹绝对路径（已做边界校验）"""
+        return safe_join(WORKSPACE_DIR, project_name)
 
     def _get_venv_dir(self, project_name: str) -> str:
         """返回指定项目的虚拟环境绝对路径"""
-        return os.path.join(self._get_project_dir(project_name), ".venv")
+        return self._get_project_dir(project_name) + os.sep + ".venv"
 
     async def create_project(self, project_name: str) -> dict:
         """
         创建新项目（幂等：目录已存在且 venv 完整时直接复用）：
-        1. 在 workspace 下建立项目文件夹
-        2. 使用 python -m venv 创建专属虚拟环境
-        3. 配置 pip 清华镜像源
-        4. 返回项目元信息字典
+        1. 校验项目名，防止路径穿越
+        2. 在 workspace 下建立项目文件夹
+        3. 使用 python -m venv 创建专属虚拟环境
+        4. 配置 pip 清华镜像源
+        5. 返回项目元信息字典
         """
+        project_name = validate_project_name(project_name)
         project_dir = self._get_project_dir(project_name)
         venv_dir = self._get_venv_dir(project_name)
 
@@ -98,8 +125,19 @@ class ProjectManager:
         """
         删除项目及其所有资源（文件夹、虚拟环境）。
         注意：调用前应先确保进程已停止。
+
+        路径必须是 WORKSPACE_DIR 的直接子目录，否则拒绝删除——
+        这是防止历史脏数据（如旧版本写入的 "../x"）触发越界 rmtree 的最后一道闸。
         """
-        project_dir = self._get_project_dir(project_name)
+        try:
+            project_dir = os.path.realpath(self._get_project_dir(project_name))
+        except PathSecurityError as e:
+            raise PermissionError(f"拒绝删除越界路径: {e}") from e
+
+        workspace_real = os.path.realpath(WORKSPACE_DIR)
+        if os.path.dirname(project_dir) != workspace_real:
+            raise PermissionError(f"拒绝删除工作区外目录: {project_dir}")
+
         if os.path.exists(project_dir):
             shutil.rmtree(project_dir)
             logger.info(f"项目 '{project_name}' 已删除，路径: {project_dir}")
@@ -345,16 +383,11 @@ class ProjectManager:
         返回文件/目录信息列表，过滤掉 .venv 隐藏目录。
         """
         project_dir = self._get_project_dir(project_name)
-        target_dir = os.path.join(project_dir, sub_path) if sub_path else project_dir
+        # safe_join 已做边界校验，越界会抛 PathSecurityError
+        target_dir = safe_join(project_dir, sub_path) if sub_path else project_dir
 
         if not os.path.exists(target_dir):
-            raise FileNotFoundError(f"目录不存在: {target_dir}")
-
-        # 安全检查：防止路径穿越
-        real_target = os.path.realpath(target_dir)
-        real_project = os.path.realpath(project_dir)
-        if not real_target.startswith(real_project):
-            raise PermissionError("禁止访问项目目录之外的文件")
+            raise FileNotFoundError(f"目录不存在: {sub_path or '/'}")
 
         entries = []
         with os.scandir(target_dir) as it:

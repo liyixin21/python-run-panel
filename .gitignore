@@ -31,3 +31,6 @@ static/
 # ====== 临时文件 ======
 doc.json
 history_*.md
+
+# ====== 审计报告（仅保留在本地，不纳入版本库）======
+SECURITY_AUDIT.md

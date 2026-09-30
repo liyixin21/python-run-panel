@@ -8,8 +8,8 @@
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
           </svg>
         </div>
-        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">Python Run Panel</h1>
-        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">项目管理面板</p>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ meta.APP_TITLE }}</h1>
+        <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ meta.APP_SUBTITLE }}</p>
       </div>
 
       <!-- 登录表单 -->
@@ -54,9 +54,12 @@
       </div>
 
       <!-- 页脚 -->
-      <p class="text-center text-xs text-gray-400 dark:text-gray-500 mt-6">
+      <p v-if="meta.FOOTER_AUTHOR_NAME" class="text-center text-xs text-gray-400 dark:text-gray-500 mt-6">
         &copy; {{ new Date().getFullYear() }} Made with
-        <a href="https://liyixin.vip" target="_blank" class="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors">liyixin</a>
+        <a :href="meta.FOOTER_AUTHOR_URL" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors">{{ meta.FOOTER_AUTHOR_NAME }}</a>
+      </p>
+      <p v-else class="text-center text-xs text-gray-400 dark:text-gray-500 mt-6">
+        &copy; {{ new Date().getFullYear() }}
       </p>
     </div>
   </div>
@@ -65,6 +68,7 @@
 <script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
+import meta from '../config.js'
 
 const router = useRouter()
 const username = ref('')

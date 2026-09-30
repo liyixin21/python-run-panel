@@ -44,9 +44,10 @@ export function uploadFiles(projectId, fileList, subPath = '', onProgress) {
     const relPath = file._webkit_relative_path || file.webkitRelativePath || file.name
     form.append('files', file, relPath)
   }
+  // 不手动设置 Content-Type：交由 axios/浏览器自动补全 multipart 的 boundary，
+  // 手动指定 multipart/form-data 会因缺少 boundary 导致后端解析失败。
   return api.post(`/api/files/${projectId}/upload`, form, {
     params: { sub_path: subPath },
-    headers: { 'Content-Type': 'multipart/form-data' },
     onUploadProgress: onProgress,
     timeout: 300000,
   })

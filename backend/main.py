@@ -1,6 +1,6 @@
 """
 FastAPI 应用入口文件
-- 初始化数据库、调度器
+- 初始化数据库
 - 注册所有路由
 - 挂载静态文件（前端构建产物）
 """
@@ -8,15 +8,15 @@ import asyncio
 import os
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Query
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.config import STATIC_DIR, WORKSPACE_DIR
+from backend.config import STATIC_DIR, WORKSPACE_DIR, CORS_ORIGINS
 from backend.database import init_db
 from backend.services.process_manager import process_manager
+from backend.utils import resolve_static
 from backend.routers import projects, processes, files, terminal, packages, auth, settings, firewall
 
 # 配置日志
@@ -41,16 +41,11 @@ async def lifespan(app: FastAPI):
     await init_db()
     logger.info("数据库已初始化")
 
-    process_manager.init_scheduler()
-    logger.info("APScheduler 调度器已启动")
-
     # 自动启动配置了 auto_start 的项目
     asyncio.create_task(_auto_start_projects())
 
     yield
 
-    # 关闭阶段
-    process_manager.shutdown_scheduler()
     logger.info("应用已关闭")
 
 
@@ -78,6 +73,7 @@ async def _auto_start_projects():
                     project_name=project.name,
                     entry_file=project.entry_file,
                     port=project.port,
+                    auto_restart=project.auto_restart or False,
                     start_cmd=project.start_cmd or "",
                 )
                 if result["success"]:
@@ -98,14 +94,18 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS 中间件（开发时允许跨域，生产环境中前端与后端同源）
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# CORS：仅在显式配置了 CORS_ORIGINS 时启用。
+# 前端与后端同源部署时无需 CORS；且 allow_origins=["*"] 与 allow_credentials=True
+# 是浏览器明确拒绝的组合，配置了也不会生效。
+if CORS_ORIGINS:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=CORS_ORIGINS,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    logger.info(f"CORS 已启用，允许来源: {CORS_ORIGINS}")
 
 # 注册 API 路由
 # 认证路由无需鉴权
@@ -123,29 +123,42 @@ app.include_router(firewall.router, dependencies=[auth.verify_token])
 
 # WebSocket 实时日志推送端点（必须在 StaticFiles mount 之前注册）
 @app.websocket("/ws/logs/{identifier}")
-async def websocket_logs(websocket: WebSocket, identifier: str):
-    """WebSocket 实时日志推送：前端通过此端点接收进程日志流"""
+async def websocket_logs(websocket: WebSocket, identifier: str, token: str = Query(None)):
+    """WebSocket 实时日志推送：前端通过此端点接收进程日志流。
+
+    token 通过查询参数传入（浏览器 WebSocket API 不支持自定义请求头），
+    与 /ws/terminal 使用同一套校验逻辑。
+    """
+    from backend.routers.auth import _require_token_ws
+
+    try:
+        _require_token_ws(token)
+    except Exception:
+        # 未认证：拒绝握手，避免日志内容外泄
+        await websocket.close(code=4401, reason="未登录")
+        return
+
     # 通过名称或数字ID查找项目
     from backend.database import async_session
     from backend.models import Project
     from sqlalchemy import select
-    
+
     async with async_session() as session:
         # 优先按名称查找
         q = select(Project).where(Project.name == identifier)
         result = await session.execute(q)
         project = result.scalar_one_or_none()
-        
+
         # 如果按名称找不到，且是纯数字，则尝试按ID查找
         if not project and identifier.isdigit():
             q = select(Project).where(Project.id == int(identifier))
             result = await session.execute(q)
             project = result.scalar_one_or_none()
-    
+
     if not project:
         await websocket.close(code=4004, reason="项目不存在")
         return
-    
+
     project_id = project.id
     await websocket.accept()
     await process_manager.subscribe_logs(project_id, websocket)
@@ -170,13 +183,29 @@ async def health_check():
 # 前端 SPA 静态文件服务（必须在所有 API 路由之后注册，作为兜底）
 static_dir = STATIC_DIR
 if os.path.isdir(static_dir):
+
     @app.get("/{path:path}")
     async def serve_spa(path: str):
-        """优先返回静态文件，匹配不到则返回 index.html 用于前端路由"""
-        file_path = os.path.join(static_dir, path)
-        if path and os.path.isfile(file_path):
-            return FileResponse(file_path)
+        """优先返回静态文件，匹配不到则返回 index.html 用于前端路由。
+
+        所有路径都经 resolve_static 做边界校验。越出 STATIC_DIR 的请求
+        （含 %2f 编码的目录穿越）直接 404，不回落到 index.html，
+        避免攻击探测被伪装成正常的 SPA 路由。
+        """
+        target, escaped = resolve_static(static_dir, path)
+        if escaped:
+            logger.warning(f"拦截静态目录穿越尝试: {path!r}")
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+        if target:
+            return FileResponse(target)
+        # API/WS 前缀不应落到 SPA 页面
+        if path.startswith("api/") or path.startswith("ws/"):
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
         return FileResponse(os.path.join(static_dir, "index.html"))
+
     logger.info(f"静态文件目录已配置: {static_dir}")
 else:
-    logger.warning(f"静态文件目录不存在: {static_dir}")
+    logger.warning(
+        f"静态文件目录不存在: {static_dir} —— 前端页面将无法访问。"
+        "请在 frontend/ 下执行 `npm run build` 生成静态资源。"
+    )

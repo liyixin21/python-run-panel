@@ -61,5 +61,20 @@ async def update_credentials(body: dict, session: AsyncSession = Depends(get_ses
         raise HTTPException(status_code=400, detail="未提供任何修改内容")
 
     await session.commit()
+
+    # 修改密码后撤销其它会话的登录态，避免旧 token 继续可用。
+    # 当前请求自身的 token 无法在此获取（依赖项只挂了 verify_token），
+    # 因此全部撤销，用户需重新登录一次 —— 安全性优先。
+    if new_password:
+        from backend.routers import auth
+        revoked = auth.revoke_all_tokens()
+        if revoked:
+            logger.info(f"密码已变更，撤销了 {revoked} 个登录态")
+
     logger.info(f"用户设置已更新: {', '.join(changed)}")
-    return {"success": True, "message": f"{'、'.join(changed)}已更新", "username": user.username}
+    return {
+        "success": True,
+        "message": f"{'、'.join(changed)}已更新",
+        "username": user.username,
+        "reauth_required": bool(new_password),
+    }

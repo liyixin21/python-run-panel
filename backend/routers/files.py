@@ -1,6 +1,10 @@
 """
 文件管理 API 路由
 支持通过数字 ID 或项目名称查找项目。
+
+所有路径校验统一走 utils.safe_join（基于 os.path.commonpath 按分量比较），
+修复了此前 startswith 前缀匹配导致的越权：
+"/w/1_secret" 曾被误判为位于 "/w/1" 之内。
 """
 import os
 import shutil
@@ -13,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.database import get_session
 from backend.models import Project
 from backend.services.project_manager import project_manager
+from backend.utils import safe_join, PathSecurityError
 
 router = APIRouter(prefix="/api/files", tags=["文件管理"])
 
@@ -23,16 +28,24 @@ async def _get_project(session, identifier: str) -> Project:
     q = select(Project).where(Project.name == identifier)
     result = await session.execute(q)
     project = result.scalar_one_or_none()
-    
+
     # 如果按名称找不到，且是纯数字，则尝试按ID查找
     if not project and identifier.isdigit():
         q = select(Project).where(Project.id == int(identifier))
         result = await session.execute(q)
         project = result.scalar_one_or_none()
-    
+
     if not project:
         raise HTTPException(status_code=404, detail="项目不存在")
     return project
+
+
+def _resolve(project_dir: str, *parts: str) -> str:
+    """在项目目录内安全解析路径，越界则 403。"""
+    try:
+        return safe_join(project_dir, *parts)
+    except PathSecurityError as e:
+        raise HTTPException(status_code=403, detail=str(e))
 
 
 @router.get("/{identifier}/list")
@@ -44,7 +57,7 @@ async def list_files(identifier: str, sub_path: str = "",
         return {"files": entries}
     except FileNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    except PermissionError as e:
+    except PathSecurityError as e:
         raise HTTPException(status_code=403, detail=str(e))
 
 
@@ -56,12 +69,7 @@ async def upload_files(identifier: str,
     project = await _get_project(session, identifier)
 
     project_dir = project_manager._get_project_dir(project.name)
-    target_dir = os.path.join(project_dir, sub_path) if sub_path else project_dir
-
-    real_target = os.path.realpath(target_dir)
-    real_project = os.path.realpath(project_dir)
-    if not real_target.startswith(real_project):
-        raise HTTPException(status_code=403, detail="禁止访问项目目录之外的文件")
+    target_dir = _resolve(project_dir, sub_path) if sub_path else project_dir
 
     os.makedirs(target_dir, exist_ok=True)
 
@@ -74,12 +82,17 @@ async def upload_files(identifier: str,
             continue
 
         # 从 FormData 的 filename 中提取目录结构（如 "MyFolder/sub/file.txt"）
-        upload_rel_path = file.filename or ""
-        if '/' in upload_rel_path:
-            sub_dir = os.path.dirname(upload_rel_path)
-            nested_target = os.path.join(target_dir, sub_dir)
-            real_nested = os.path.realpath(nested_target)
-            if not real_nested.startswith(real_project):
+        upload_rel_path = (file.filename or "").replace("\\", "/")
+        sub_dir = os.path.dirname(upload_rel_path)
+        if sub_dir:
+            # 逐级校验：任何一级越界都跳过该文件
+            try:
+                nested_target = safe_join(target_dir, sub_dir)
+            except PathSecurityError:
+                results.append({
+                    "success": False, "filename": safe_filename,
+                    "error": "路径越界，已拒绝",
+                })
                 continue
             os.makedirs(nested_target, exist_ok=True)
             file_path = os.path.join(nested_target, safe_filename)
@@ -102,7 +115,8 @@ async def upload_files(identifier: str,
             "path": os.path.relpath(file_path, project_dir), "size": len(content),
         })
 
-    return {"success": True, "has_requirements": has_requirements, "files": results, "total": len(results)}
+    return {"success": True, "has_requirements": has_requirements,
+            "files": results, "total": len(results)}
 
 
 @router.post("/{identifier}/mkdir")
@@ -112,12 +126,8 @@ async def create_directory(identifier: str, dir_name: str = Query(...),
     project = await _get_project(session, identifier)
 
     project_dir = project_manager._get_project_dir(project.name)
-    target_dir = os.path.join(project_dir, sub_path) if sub_path else project_dir
-
-    real_target = os.path.realpath(os.path.join(target_dir, dir_name))
-    real_project = os.path.realpath(project_dir)
-    if not real_target.startswith(real_project):
-        raise HTTPException(status_code=403, detail="禁止访问项目目录之外的文件")
+    target_dir = _resolve(project_dir, sub_path) if sub_path else project_dir
+    real_target = _resolve(target_dir, dir_name)
 
     try:
         os.makedirs(real_target, exist_ok=True)
@@ -132,20 +142,16 @@ async def delete_file(identifier: str, file_path: str = Query(...),
     project = await _get_project(session, identifier)
 
     project_dir = project_manager._get_project_dir(project.name)
-    full_path = os.path.join(project_dir, file_path)
+    real_target = _resolve(project_dir, file_path)
 
-    real_target = os.path.realpath(full_path)
-    real_project = os.path.realpath(project_dir)
-    if not real_target.startswith(real_project):
-        raise HTTPException(status_code=403, detail="禁止访问项目目录之外的文件")
-    if real_target == real_project:
+    if os.path.realpath(real_target) == os.path.realpath(project_dir):
         raise HTTPException(status_code=400, detail="不允许删除项目根目录")
 
     try:
-        if os.path.isdir(full_path):
-            shutil.rmtree(full_path)
+        if os.path.isdir(real_target):
+            shutil.rmtree(real_target)
         else:
-            os.remove(full_path)
+            os.remove(real_target)
         return {"success": True, "message": "已删除"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"删除失败: {str(e)}")
@@ -157,17 +163,13 @@ async def read_file_content(identifier: str, file_path: str = Query(...),
     project = await _get_project(session, identifier)
 
     project_dir = project_manager._get_project_dir(project.name)
-    full_path = os.path.join(project_dir, file_path)
+    real_target = _resolve(project_dir, file_path)
 
-    real_target = os.path.realpath(full_path)
-    real_project = os.path.realpath(project_dir)
-    if not real_target.startswith(real_project):
-        raise HTTPException(status_code=403, detail="禁止访问项目目录之外的文件")
     if os.path.isdir(real_target):
         raise HTTPException(status_code=400, detail="不能读取目录")
 
     try:
-        with open(full_path, "r", encoding="utf-8") as f:
+        with open(real_target, "r", encoding="utf-8") as f:
             content = f.read()
         return {"content": content, "filename": os.path.basename(file_path)}
     except UnicodeDecodeError:
@@ -192,16 +194,21 @@ async def write_file_content(identifier: str,
     project = await _get_project(session, identifier)
 
     project_dir = project_manager._get_project_dir(project.name)
-    full_path = os.path.join(project_dir, file_path)
+    real_target = _resolve(project_dir, file_path)
 
-    real_target = os.path.realpath(full_path)
-    real_project = os.path.realpath(project_dir)
-    if not real_target.startswith(real_project):
-        raise HTTPException(status_code=403, detail="禁止访问项目目录之外的文件")
+    # 禁止把目录当作文件写入
+    if os.path.isdir(real_target):
+        raise HTTPException(status_code=400, detail="目标是目录，无法写入")
 
     try:
-        with open(full_path, "w", encoding="utf-8") as f:
+        # 目标父目录必须仍在项目内（real_target 已校验，此处确保不存在符号链接逃逸）
+        parent = os.path.dirname(real_target)
+        if not os.path.isdir(parent):
+            raise HTTPException(status_code=404, detail="目标目录不存在")
+        with open(real_target, "w", encoding="utf-8") as f:
             f.write(content)
         return {"success": True, "message": "文件已保存"}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"写入失败: {str(e)}")

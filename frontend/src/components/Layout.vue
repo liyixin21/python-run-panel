@@ -13,8 +13,8 @@
               </svg>
             </div>
             <div>
-              <h1 class="text-lg font-bold text-gray-900 dark:text-white leading-tight">Python Run Panel</h1>
-              <p class="text-xs text-gray-400 dark:text-gray-500 leading-tight">项目管理面板</p>
+              <h1 class="text-lg font-bold text-gray-900 dark:text-white leading-tight">{{ meta.APP_TITLE }}</h1>
+              <p class="text-xs text-gray-400 dark:text-gray-500 leading-tight">{{ meta.APP_SUBTITLE }}</p>
             </div>
           </router-link>
 
@@ -82,11 +82,15 @@
     <!-- 页脚 -->
     <footer class="border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
       <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between text-xs text-gray-400 dark:text-gray-500">
-        <span>Powered by <a href="https://github.com/liyixin21/python-run-panel" target="_blank" class="font-medium text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors">Python Run Panel</a></span>
-        <span>
-          &copy; {{ new Date().getFullYear() }} Made with
-          <a href="https://liyixin.vip" target="_blank" class="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors">liyixin</a>
+        <span v-if="meta.FOOTER_PROJECT_URL">
+          Powered by <a :href="meta.FOOTER_PROJECT_URL" target="_blank" rel="noopener noreferrer" class="font-medium text-gray-500 dark:text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 transition-colors">{{ meta.APP_TITLE }}</a>
         </span>
+        <span v-else>{{ meta.APP_TITLE }}</span>
+        <span v-if="meta.FOOTER_AUTHOR_NAME">
+          &copy; {{ new Date().getFullYear() }} Made with
+          <a :href="meta.FOOTER_AUTHOR_URL" target="_blank" rel="noopener noreferrer" class="text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300 transition-colors">{{ meta.FOOTER_AUTHOR_NAME }}</a>
+        </span>
+        <span v-else>&copy; {{ new Date().getFullYear() }}</span>
       </div>
     </footer>
   </div>
@@ -95,6 +99,8 @@
 <script setup>
 import { ref, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import api from '../api/index.js'
+import meta from '../config.js'
 
 const router = useRouter()
 
@@ -137,7 +143,12 @@ watch(
 
 onMounted(initDarkMode)
 
-function logout() {
+async function logout() {
+  // 先在服务端撤销 token，避免登出后旧 token 仍可复用；
+  // 网络异常不阻断本地登出流程。
+  try {
+    await api.post('/api/auth/logout')
+  } catch (e) { /* ignore */ }
   localStorage.removeItem('auth_token')
   router.replace('/login')
 }

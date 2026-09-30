@@ -74,10 +74,14 @@
 
       <!-- 连接状态 -->
       <div v-if="connected" class="flex items-center gap-2 px-3 py-2 rounded-lg bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-400 text-xs">
-        <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span> 1Panel API 已连接
+        <span class="w-1.5 h-1.5 rounded-full bg-green-500"></span>
+        <span>1Panel API 已连接<span v-if="connInfo" class="text-green-600/80 dark:text-green-400/70"> · {{ connInfo }}</span></span>
       </div>
       <div v-else-if="connected === false" class="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 text-xs">
         <span class="w-1.5 h-1.5 rounded-full bg-red-500"></span> 未连接 1Panel API，自动放行功能不可用
+      </div>
+      <div v-else-if="testing" class="flex items-center gap-2 px-3 py-2 rounded-lg bg-gray-50 dark:bg-gray-700/40 text-gray-500 dark:text-gray-400 text-xs">
+        <span class="w-3 h-3 border-2 border-gray-400 border-t-transparent rounded-full animate-spin"></span> 正在检测 1Panel API 连接...
       </div>
 
       <div class="space-y-3">
@@ -161,6 +165,7 @@ const fwOk = ref(false)
 const testing = ref(false)
 const savingFw = ref(false)
 const connected = ref(null) // null=未知, true=已连接, false=未连接
+const connInfo = ref('')
 
 onMounted(async () => {
   try {
@@ -170,13 +175,33 @@ onMounted(async () => {
   try {
     const res = await api.get('/api/firewall/settings')
     fwSettings.value = res.data
-    if (res.data.api_key === '***') fwSettings.value.api_key = ''
-    // 如果有 api_key，尝试测试连接
-    if (res.data.api_key && res.data.api_key !== '***') {
-      connected.value = null // 待验证
+    // 服务端以 *** 掩码返回 Key，输入框留空即可（提交时会保留原 Key）
+    if (res.data.api_key === '***') {
+      fwSettings.value.api_key = ''
+      // 已配置 Key：被动探测连接状态，让下方开关可用
+      await probeConnection()
     }
   } catch (e) { /* ignore */ }
 })
+
+// 挂载时的被动探测：只更新连接状态，不改动用户配置
+async function probeConnection() {
+  testing.value = true
+  try {
+    const res = await api.post('/api/firewall/test-connection', { ...fwSettings.value })
+    connected.value = !!res.data.success
+    connInfo.value = res.data.success ? res.data.message : ''
+    if (!res.data.success) {
+      fwMsg.value = res.data.message || '1Panel API 连接失败'
+      setTimeout(() => { fwMsg.value = '' }, 8000)
+    }
+  } catch (e) {
+    connected.value = false
+    connInfo.value = ''
+  } finally {
+    testing.value = false
+  }
+}
 
 async function doTest() {
   testing.value = true
@@ -184,6 +209,7 @@ async function doTest() {
     const res = await api.post('/api/firewall/test-connection', { ...fwSettings.value })
     const ok = res.data.success
     connected.value = ok
+    connInfo.value = ok ? res.data.message : ''
     fwOk.value = ok
     fwMsg.value = res.data.message
     if (!ok && fwSettings.value.auto_open) {
@@ -193,6 +219,7 @@ async function doTest() {
     return ok
   } catch (err) {
     connected.value = false
+    connInfo.value = ''
     fwOk.value = false
     fwMsg.value = err.response?.data?.detail || '连接测试异常'
     return false
@@ -270,13 +297,20 @@ async function saveCredentials() {
       new_password: form.value.newPassword || undefined,
     })
     success.value = true
-    message.value = res.data.message
     form.value = { newUsername: '', newPassword: '', currentPassword: '' }
     // 更新本地缓存的用户名
     if (res.data.username) {
       currentUsername.value = res.data.username
       localStorage.setItem('auth_username', res.data.username)
     }
+    // 改密后服务端已撤销全部登录态，必须重新登录
+    if (res.data.reauth_required) {
+      message.value = `${res.data.message}，请重新登录`
+      localStorage.removeItem('auth_token')
+      setTimeout(() => { window.location.href = '/login' }, 1500)
+      return
+    }
+    message.value = res.data.message
   } catch (err) {
     success.value = false
     message.value = err.response?.data?.detail || '保存失败'
