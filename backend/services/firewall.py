@@ -209,24 +209,60 @@ async def _load_context(force: bool = False) -> dict:
 # ==================== 新版（规则清单式） ====================
 
 
+def _rule_uuid(item: dict) -> str:
+    """从清单条目中取规则 uuid。
+
+    1Panel 的 uuid 只存在于 desired.uuid（filter.DesiredRule），
+    item.rule 与 item.observed.rule 上都没有该字段；
+    但 observed.locator.nativeId 可作为原生规则标识兜底。
+    """
+    desired = (item or {}).get("desired") or {}
+    uuid = desired.get("uuid")
+    if uuid:
+        return str(uuid)
+    locator = ((item or {}).get("observed") or {}).get("locator") or {}
+    native = locator.get("nativeId")
+    return str(native) if native else ""
+
+
+def _matches_accept_port(item: dict, target: str) -> bool:
+    """判断清单条目是否为「目标端口的 accept 规则」。
+
+    item.rule 与 item.observed.rule 都可能承载规则信息，任一命中即算匹配，
+    避免因响应字段摆放差异而漏判（这正是面板误报未放行的成因之一）。
+    """
+    candidates = [
+        (item or {}).get("rule") or {},
+        ((item or {}).get("observed") or {}).get("rule") or {},
+        ((item or {}).get("desired") or {}).get("rule") or {},
+    ]
+    for rule in candidates:
+        if not rule:
+            continue
+        raw = str(rule.get("destinationPort") or "").strip()
+        if not raw:
+            continue
+        if _port_matches(raw, target) and rule.get("action") == "accept":
+            return True
+    return False
+
+
+def _find_accept_rules(items: list[dict], port: int) -> list[dict]:
+    """挑出目标端口的所有 accept 规则条目。"""
+    target = str(port)
+    return [it for it in (items or []) if _matches_accept_port(it, target)]
+
+
 def _extract_accept_uuids(items: list[dict], port: int) -> list[str]:
-    """从规则清单中挑出目标端口的所有 accept 规则 uuid（去重）。
+    """挑出目标端口的 accept 规则 uuid（去重）。
 
     收集全部匹配项而非只取第一条，是为了能一次清理掉历史遗留的冗余规则
     （早期版本按三链两族创建，同一端口会有多条）。
     """
-    target = str(port)
     uuids: list[str] = []
     seen: set[str] = set()
-    for item in items or []:
-        rule = (item or {}).get("rule") or {}
-        # destinationPort 可能是单端口、端口段或逗号分隔列表
-        raw = str(rule.get("destinationPort") or "").strip()
-        if not _port_matches(raw, target):
-            continue
-        if rule.get("action") != "accept":
-            continue
-        uuid = rule.get("uuid")
+    for item in _find_accept_rules(items, port):
+        uuid = _rule_uuid(item)
         if uuid and uuid not in seen:
             seen.add(uuid)
             uuids.append(uuid)
@@ -448,14 +484,18 @@ async def test_connection(config: dict) -> tuple[bool, str]:
 
 
 async def check_port(port: int) -> bool:
-    """检查指定端口是否已有 ACCEPT 规则。"""
+    """检查指定端口是否已有 ACCEPT 规则。
+
+    判定依据是「清单里存在匹配的 accept 条目」，而不是「条目带 uuid」——
+    uuid 只出现在 desired 上，观测到的规则可能没有，用 uuid 判定会误报未放行。
+    """
     try:
         context = await _load_context()
         if context["flavor"] == "v2":
             items = await _search_rules_v2(context, port)
             if items is None:
                 return False
-            return bool(_extract_accept_uuids(items, port))
+            return bool(_find_accept_rules(items, port))
         return await _check_port_v1(port)
     except Exception as e:
         logger.warning(f"[防火墙] check_port 异常: {e}")
@@ -468,7 +508,7 @@ async def open_port(port: int, project_name: str) -> bool:
         context = await _load_context()
         if context["flavor"] == "v2":
             items = await _search_rules_v2(context, port)
-            if items is not None and _extract_accept_uuids(items, port):
+            if items is not None and _find_accept_rules(items, port):
                 logger.info(f"[防火墙] 端口 {port} 已开放，跳过 (项目: {project_name})")
                 return True
             return await _open_port_v2(context, port, project_name)

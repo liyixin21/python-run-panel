@@ -16,9 +16,14 @@ _MASKED_KEY = "***"
 
 @router.get("/check")
 async def api_check_port(port: int):
-    """检查指定端口是否已放行。防火墙未配置时返回 None。"""
+    """检查指定端口是否已放行。
+
+    只要求已配置 API Key；auto_open 仅控制「是否自动放行」，
+    不应影响状态查询——否则关闭自动放行后，面板会把已放行的端口
+    一律显示为未放行。
+    """
     config = load_firewall_config()
-    if not config.get("auto_open") or not config.get("api_key"):
+    if not config.get("api_key"):
         return {"port": port, "open": None}
 
     try:
