@@ -1,0 +1,45 @@
+# ====== 版本控制与 IDE ======
+.git/
+.gitignore
+.gitattributes
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ====== 运行时数据（含 panel.db、tokens.json、真实防火墙凭据）======
+# 绝不能打进镜像
+workspace/
+static/
+
+# ====== Python ======
+.venv/
+__pycache__
+**/__pycache__
+**/__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+
+# ====== Node / 前端 ======
+# 注意：不排除 frontend/ 本身，Dockerfile 需要其源码构建静态资源；
+# 仅排除本地依赖，镜像内由 npm install 重新安装
+frontend/node_modules/
+frontend/dist/
+
+# ====== 本地文档与临时文件 ======
+SECURITY_AUDIT.md
+doc.json
+history_*.md
+README.md
+
+# ====== 配置 ======
+.env
+.env.*
+
+# ====== macOS ======
+.DS_Store
+**/.DS_Store
+.AppleDouble
+.LSOverride
+**/._*
