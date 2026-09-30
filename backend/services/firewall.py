@@ -30,8 +30,10 @@ from backend.config import load_firewall_config
 
 logger = logging.getLogger(__name__)
 
-# 新版接口要求按 scope 操作；iptables/nftables 的放行规则落在这三条链上
+# 查询用：1Panel 管理的三条 iptables/nftables 链
 _CHAIN_SCOPE_ORDER = ("1PANEL_BASIC_BEFORE", "1PANEL_BASIC", "1PANEL_BASIC_AFTER")
+# 创建用：1Panel 新建规则固定落在该链（与官方前端一致）
+_CHAIN_SCOPE_CREATE = "1PANEL_BASIC"
 
 # 上下文（API 版本 + 防火墙后端 + 可用地址族）缓存，避免每次操作都探测
 _CONTEXT_TTL = 300.0
@@ -102,7 +104,12 @@ async def _call_api(method: str, path: str, data: dict | None = None) -> tuple[i
 
 
 def _build_scopes(provider: str, families: list[str]) -> list[dict]:
-    """按 1Panel 官方前端同款规则构造 scope 列表。"""
+    """构造【查询】用的 scope 列表。
+
+    查询需要覆盖 1Panel 管理的三条链（BEFORE/BASIC/AFTER），
+    否则看漏已存在的规则、导致重复放行。
+    注意：这个多链列表只用于读，创建规则时必须用 _build_create_scope。
+    """
     if provider in ("iptables", "nftables"):
         return [
             {
@@ -120,6 +127,28 @@ def _build_scopes(provider: str, families: list[str]) -> list[dict]:
     if provider == "ufw":
         return [{"provider": "ufw", "family": "inet", "chain": "incoming", "direction": "input"}]
     return []
+
+
+def _build_create_scope(provider: str, family: str = "ipv4") -> dict | None:
+    """构造【创建】用的单个 scope。
+
+    1Panel 官方前端在新建规则时把 chain 固定为 '1PANEL_BASIC'（单条链），
+    family 取源地址所属族、无源地址时默认 ipv4。一个端口因此只产生一条规则。
+    早期实现按三条链 × 两个地址族创建，会在防火墙上堆出 6 条重复规则。
+    """
+    if provider in ("iptables", "nftables"):
+        return {
+            "provider": provider,
+            "family": family,
+            "table": "filter",
+            "chain": _CHAIN_SCOPE_CREATE,
+            "direction": "input",
+        }
+    if provider == "firewalld":
+        return {"provider": "firewalld", "family": "inet", "zone": "public", "direction": "input"}
+    if provider == "ufw":
+        return {"provider": "ufw", "family": "inet", "chain": "incoming", "direction": "input"}
+    return None
 
 
 def _parse_backend(payload: dict) -> dict:
@@ -181,18 +210,59 @@ async def _load_context(force: bool = False) -> dict:
 
 
 def _extract_accept_uuids(items: list[dict], port: int) -> list[str]:
-    """从规则清单中挑出目标端口的 accept 规则 uuid。"""
+    """从规则清单中挑出目标端口的所有 accept 规则 uuid（去重）。
+
+    收集全部匹配项而非只取第一条，是为了能一次清理掉历史遗留的冗余规则
+    （早期版本按三链两族创建，同一端口会有多条）。
+    """
     target = str(port)
-    uuids = []
+    uuids: list[str] = []
+    seen: set[str] = set()
     for item in items or []:
         rule = (item or {}).get("rule") or {}
-        if str(rule.get("destinationPort") or "").strip() != target:
+        # destinationPort 可能是单端口、端口段或逗号分隔列表
+        raw = str(rule.get("destinationPort") or "").strip()
+        if not _port_matches(raw, target):
             continue
         if rule.get("action") != "accept":
             continue
-        if rule.get("uuid"):
-            uuids.append(rule["uuid"])
+        uuid = rule.get("uuid")
+        if uuid and uuid not in seen:
+            seen.add(uuid)
+            uuids.append(uuid)
     return uuids
+
+
+def _port_matches(rule_port: str, target: str) -> bool:
+    """判断规则里的端口表达是否覆盖目标端口。
+
+    支持单端口（8080）、端口段（8000-8100）、逗号分隔（80,443）。
+    """
+    if not rule_port:
+        return False
+    try:
+        want = int(target)
+    except ValueError:
+        return rule_port == target
+
+    for chunk in rule_port.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "-" in chunk:
+            lo_s, _, hi_s = chunk.partition("-")
+            try:
+                if int(lo_s.strip()) <= want <= int(hi_s.strip()):
+                    return True
+            except ValueError:
+                continue
+        else:
+            try:
+                if int(chunk) == want:
+                    return True
+            except ValueError:
+                continue
+    return False
 
 
 async def _search_rules_v2(context: dict, port: int) -> list[dict] | None:
@@ -212,24 +282,27 @@ async def _search_rules_v2(context: dict, port: int) -> list[dict] | None:
 
 
 async def _open_port_v2(context: dict, port: int, project_name: str) -> bool:
-    """新版：批量创建放行规则（异步任务）。"""
-    scopes = _build_scopes(context["provider"], context["families"])
-    if not scopes:
+    """新版：创建一条放行规则（异步任务）。
+
+    刻意只创建单条规则：1Panel 的新建接口固定把规则落在 1PANEL_BASIC 链、
+    单个地址族上。早期实现按「三链 × 两族」批量创建，会在防火墙上留下
+    6 条重复规则（用户在面板上看到一屏冗余条目）。
+    """
+    scope = _build_create_scope(context["provider"])
+    if not scope:
+        logger.warning(f"[防火墙] 未识别的防火墙后端: {context['provider'] or '空'}")
         return False
 
-    items = [
-        {
-            "rule": {
-                "scope": scope,
-                "protocol": "tcp",
-                "destinationPort": str(port),
-                "action": "accept",
-                "description": project_name,
-            },
-            "sourceKind": "user",
-        }
-        for scope in scopes
-    ]
+    items = [{
+        "rule": {
+            "scope": scope,
+            "protocol": "tcp",
+            "destinationPort": str(port),
+            "action": "accept",
+            "description": project_name,
+        },
+        "sourceKind": "user",
+    }]
 
     code, payload = await _call_api("POST", "/api/v2/hosts/firewall/rules", {"items": items})
     if code != 200 or not isinstance(payload, dict) or payload.get("code") != 200:
